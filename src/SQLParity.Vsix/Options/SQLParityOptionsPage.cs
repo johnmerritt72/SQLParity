@@ -19,6 +19,12 @@ namespace SQLParity.Vsix.Options
     [Guid("E7F3A2B1-C4D5-4E6F-8A9B-0C1D2E3F4A5B")]
     internal class SQLParityOptionsPage : DialogPage
     {
+        [Category("About")]
+        [DisplayName("Version")]
+        [Description("Installed SQLParity extension version.")]
+        [ReadOnly(true)]
+        public string Version => VersionInfo.Version;
+
         [Category("Connection Defaults")]
         [DisplayName("Default Authentication")]
         [Description("Default authentication method for new connections.")]

@@ -192,9 +192,8 @@
     <WriteLinesToFile File="$(Ssms22ExtPath)manifest.json" Overwrite="true" Lines="{&quot;id&quot;:&quot;$(VsixIdentity)&quot;,&quot;version&quot;:&quot;1.0.0&quot;,&quot;type&quot;:&quot;Vsix&quot;,&quot;vsixId&quot;:&quot;$(VsixIdentity)&quot;,&quot;extensionDir&quot;:&quot;[installdir]&quot;,&quot;files&quot;:[{&quot;fileName&quot;:&quot;/extension.vsixmanifest&quot;,&quot;sha256&quot;:null},{&quot;fileName&quot;:&quot;/SQLParity.Vsix.dll&quot;,&quot;sha256&quot;:null},{&quot;fileName&quot;:&quot;/SQLParity.Core.dll&quot;,&quot;sha256&quot;:null},{&quot;fileName&quot;:&quot;/SQLParity.Vsix.pkgdef&quot;,&quot;sha256&quot;:null}],&quot;installSizes&quot;:{&quot;targetDrive&quot;:0},&quot;dependencies&quot;:{&quot;Microsoft.VisualStudio.Component.CoreEditor&quot;:&quot;[17.0%2C19.0)&quot;}}" />
     <Message Text="Deployed SQLParity to SSMS 22 experimental hive: $(Ssms22ExtPath)" Importance="high" />
   </Target>
-  <!-- Auto-increment patch version on every build -->
-  <Target Name="BumpVersion" BeforeTargets="CoreCompile">
-    <Exec Command="powershell -NoProfile -Command &quot;$f='$(ProjectDir)version.txt'; $v=[version](Get-Content $f -Raw).Trim(); $nv='{0}.{1}.{2}' -f $v.Major,$v.Minor,($v.Build+1); Set-Content $f $nv -NoNewline; Write-Host \&quot;SQLParity version: $nv\&quot;&quot;" />
+  <!-- Generate VersionInfo.g.cs from version.txt (single source of truth) -->
+  <Target Name="GenerateVersionInfo" BeforeTargets="CoreCompile">
     <ReadLinesFromFile File="$(ProjectDir)version.txt">
       <Output TaskParameter="Lines" PropertyName="SQLParityVersion" />
     </ReadLinesFromFile>

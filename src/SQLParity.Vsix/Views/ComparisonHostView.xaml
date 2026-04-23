@@ -1,0 +1,62 @@
+<UserControl x:Class="SQLParity.Vsix.Views.ComparisonHostView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:SQLParity.Vsix.ViewModels"
+             xmlns:views="clr-namespace:SQLParity.Vsix.Views"
+             Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}">
+    <UserControl.DataContext>
+        <vm:ComparisonHostViewModel />
+    </UserControl.DataContext>
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+    </UserControl.Resources>
+
+    <Grid>
+        <!-- Connection Setup -->
+        <views:ConnectionSetupView DataContext="{Binding SetupViewModel}"
+                                   Visibility="{Binding DataContext.ShowSetup,
+                                       RelativeSource={RelativeSource AncestorType=UserControl},
+                                       Converter={StaticResource BoolToVis}}" />
+
+        <!-- Confirmation -->
+        <views:ConfirmationView DataContext="{Binding ConfirmationViewModel}"
+                                Visibility="{Binding DataContext.ShowConfirmation,
+                                    RelativeSource={RelativeSource AncestorType=UserControl},
+                                    Converter={StaticResource BoolToVis}}" />
+
+        <!-- Comparing placeholder -->
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                    Visibility="{Binding ShowComparing, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="Comparing..."
+                       FontSize="20" FontWeight="Bold"
+                       HorizontalAlignment="Center"
+                       Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" />
+            <TextBlock Text="{Binding ProgressText}"
+                       FontSize="12" HorizontalAlignment="Center" Margin="0,8,0,0"
+                       Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
+            <ProgressBar Value="{Binding ProgressValue}"
+                         Maximum="{Binding ProgressMaximum}"
+                         Width="400" Height="20" Margin="0,12,0,0">
+                <ProgressBar.Style>
+                    <Style TargetType="ProgressBar">
+                        <Setter Property="IsIndeterminate" Value="False" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ProgressMaximum}" Value="0">
+                                <Setter Property="IsIndeterminate" Value="True" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ProgressBar.Style>
+            </ProgressBar>
+            <Button Content="Cancel" Command="{Binding CancelComparisonCommand}"
+                    Padding="16,6" Margin="0,16,0,0"
+                    HorizontalAlignment="Center" />
+        </StackPanel>
+
+        <!-- Results -->
+        <views:ResultsView DataContext="{Binding ResultsViewModel}"
+                           Visibility="{Binding DataContext.ShowResults,
+                               RelativeSource={RelativeSource AncestorType=UserControl},
+                               Converter={StaticResource BoolToVis}}" />
+    </Grid>
+</UserControl>

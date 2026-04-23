@@ -1,0 +1,41 @@
+# Build outputs
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+[Ll]og/
+[Ll]ogs/
+
+# VS / VSIX
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+**/*.vsix
+!**/SQLParity.Vsix/
+
+# NuGet
+*.nupkg
+*.snupkg
+**/packages/*
+!**/packages/build/
+*.nuget.props
+*.nuget.targets
+
+# ReSharper / Rider
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings.user
+.idea/
+
+# Test results
+[Tt]est[Rr]esult*/
+coverage/
+*.coverage
+*.coveragexml
+
+# Temp / OS
+*.tmp
+*.swp
+Thumbs.db
+.DS_Store

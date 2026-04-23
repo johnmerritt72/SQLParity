@@ -1,0 +1,87 @@
+<UserControl x:Class="SQLParity.Vsix.Views.TableDetailView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:SQLParity.Vsix.ViewModels"
+             xmlns:model="clr-namespace:SQLParity.Core.Model;assembly=SQLParity.Core">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+    </UserControl.Resources>
+    <TreeView ItemsSource="{Binding}" BorderThickness="0">
+        <TreeView.Resources>
+            <HierarchicalDataTemplate DataType="{x:Type vm:TableTreeNode}" ItemsSource="{Binding Children}">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding StatusIcon}" Margin="0,0,2,0" />
+                    <TextBlock Text="{Binding RiskIcon}" Margin="0,0,4,0" FontSize="9"
+                               FontWeight="Bold">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="Gray" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding RiskIcon}" Value="SAFE">
+                                        <Setter Property="Foreground" Value="#2E7D32" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding RiskIcon}" Value="CAUTION">
+                                        <Setter Property="Foreground" Value="#F9A825" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding RiskIcon}" Value="RISKY">
+                                        <Setter Property="Foreground" Value="#E65100" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding RiskIcon}" Value="DESTRUCTIVE">
+                                        <Setter Property="Foreground" Value="#C62828" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock Text="{Binding DisplayName}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Status}" Value="{x:Static model:ChangeStatus.New}">
+                                        <Setter Property="Foreground" Value="#0066CC" />
+                                        <Setter Property="FontWeight" Value="Bold" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Status}" Value="{x:Static model:ChangeStatus.Dropped}">
+                                        <Setter Property="Foreground" Value="Red" />
+                                        <Setter Property="TextDecorations" Value="Strikethrough" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Status}" Value="{x:Static model:ChangeStatus.Modified}">
+                                        <Setter Property="Foreground" Value="#7B2D8E" />
+                                        <Setter Property="FontStyle" Value="Italic" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Status}" Value="{x:Static model:ChangeStatus.Renamed}">
+                                        <Setter Property="Foreground" Value="#00695C" />
+                                        <Setter Property="FontWeight" Value="Bold" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsGroup}" Value="True">
+                                        <Setter Property="FontWeight" Value="SemiBold" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- Rename candidate button (shown on NEW columns with a matching DROPPED counterpart) -->
+                    <Button Margin="8,0,0,0" Padding="4,0" FontSize="11"
+                            Background="Transparent" BorderThickness="0" Cursor="Hand"
+                            Foreground="#00695C"
+                            Content="{Binding RenameFromHint}"
+                            Command="{Binding ApplyRenameCommand}"
+                            CommandParameter="{Binding FirstRenameCandidate}"
+                            ToolTip="Mark this ADD + DROP pair as a rename — will emit sp_rename instead"
+                            Visibility="{Binding HasRenameCandidates, Converter={StaticResource BoolToVis}}" />
+
+                    <!-- Undo rename link (shown on Renamed columns) -->
+                    <Button Margin="8,0,0,0" Padding="4,0" FontSize="11"
+                            Background="Transparent" BorderThickness="0" Cursor="Hand"
+                            Foreground="#00695C"
+                            Content="(undo rename)"
+                            Command="{Binding UndoRenameCommand}"
+                            CommandParameter="{Binding ColumnName}"
+                            Visibility="{Binding IsRename, Converter={StaticResource BoolToVis}}" />
+                </StackPanel>
+            </HierarchicalDataTemplate>
+        </TreeView.Resources>
+    </TreeView>
+</UserControl>

@@ -1,0 +1,89 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git init:*)",
+      "Bash(git branch:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(dotnet new:*)",
+      "Bash(dotnet --info)",
+      "Bash(git rm:*)",
+      "Bash(ls SQLParity.*)",
+      "Bash(ls -la c:\\\\Code\\\\SQLCompare/*.sln*)",
+      "Bash(dotnet sln:*)",
+      "Bash(dotnet build:*)",
+      "Bash(dotnet add:*)",
+      "Bash(dotnet test:*)",
+      "Bash(dotnet restore:*)",
+      "Bash(dotnet package:*)",
+      "Bash(dotnet clean:*)",
+      "Bash(dotnet run:*)",
+      "Bash(sqllocaldb info:*)",
+      "Bash(sqllocaldb create:*)",
+      "Bash(sqllocaldb start:*)",
+      "Bash(\"/c/Program Files/Microsoft Visual Studio/2022/Professional/MSBuild/Current/Bin/MSBuild.exe\" SQLParity.sln /t:Build /p:Configuration=Debug)",
+      "Bash(\"/c/Program Files/Microsoft Visual Studio/2022/Professional/MSBuild/Current/Bin/MSBuild.exe\" SQLParity.sln -t:Build -p:Configuration=Debug)",
+      "Bash(\"/c/Program Files/Microsoft Visual Studio/2022/Professional/MSBuild/Current/Bin/MSBuild.exe\" SQLParity.sln -t:Restore -p:Configuration=Debug)",
+      "Read(//c/Program Files \\(x86\\)/Microsoft SQL Server Management Studio 22/Common7/IDE/**)",
+      "Read(//c/Program Files/Microsoft SQL Server Management Studio 22/Common7/IDE/**)",
+      "Read(//c/Program Files \\(x86\\)/Microsoft SQL Server Management Studio 21/Common7/IDE/**)",
+      "Read(//c/Program Files/Microsoft SQL Server Management Studio 21/Common7/IDE/**)",
+      "Bash(\"/c/Program Files/Microsoft Visual Studio/2022/Professional/MSBuild/Current/Bin/MSBuild.exe\" SQLParity.sln -t:Build -p:Configuration=Debug -v:minimal)",
+      "Bash(dotnet script:*)",
+      "Bash(powershell -Command ':*)",
+      "Bash(powershell -Command 'Start-Sleep -Seconds 2; $pkg = Get-ChildItem -Path \"$env:USERPROFILE\\\\.nuget\\\\packages\\\\microsoft.sqlserver.sqlmanagementobjects\" -Recurse -Filter '\\\\''Microsoft.SqlServer.Smo.dll'\\\\'' | Select-Object -First 1; if \\($pkg\\) { Write-Host '\\\\''Found:'\\\\'' $pkg.FullName } else { Write-Host '\\\\''Not found'\\\\''; ls \"$env:USERPROFILE\\\\.nuget\\\\packages\" | Where-Object { $_.Name -like '\\\\''*sqlmanage*'\\\\'' } | Select Name }')",
+      "Bash(powershell -NoProfile -Command ':*)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(\"/c/Program Files/Microsoft Visual Studio/2022/Professional/MSBuild/Current/Bin/MSBuild.exe\" SQLParity.sln -t:Restore -p:Configuration=Debug -v:minimal)",
+      "Bash(\"C:\\\\Program Files\\\\Microsoft Visual Studio\\\\2022\\\\Professional\\\\MSBuild\\\\Current\\\\Bin\\\\MSBuild.exe\" \"c:/Code/SQLCompare/SQLParity.sln\" -t:Build -p:Configuration=Debug -v:minimal)",
+      "Bash(\"/c/Program Files/Microsoft Visual Studio/2022/Professional/MSBuild/Current/Bin/MSBuild.exe\" \"c:/Code/SQLCompare/src/SQLParity.Vsix/SQLParity.Vsix.csproj\" -t:Build -p:Configuration=Debug -v:normal)",
+      "Bash(\"/c/Program Files/Microsoft Visual Studio/2022/Professional/MSBuild/Current/Bin/MSBuild.exe\" src/SQLParity.Vsix/SQLParity.Vsix.csproj -t:Build -p:Configuration=Debug -v:minimal)",
+      "Bash(\"/c/Program Files/Microsoft Visual Studio/2022/Professional/MSBuild/Current/Bin/MSBuild.exe\" src/SQLParity.Vsix/SQLParity.Vsix.csproj -t:Rebuild -p:Configuration=Debug -v:minimal)",
+      "Bash(xxd \"c:/Code/SQLCompare/src/SQLParity.Vsix/bin/Debug/SQLParity.Vsix.pkgdef\")",
+      "Bash(iconv -f UTF-16LE -t UTF-8 \"c:/Code/SQLCompare/src/SQLParity.Vsix/bin/Debug/SQLParity.Vsix.pkgdef\")",
+      "Bash(powershell -Command \"Get-Content 'c:\\\\Code\\\\SQLCompare\\\\src\\\\SQLParity.Vsix\\\\bin\\\\Debug\\\\SQLParity.Vsix.pkgdef' -Encoding Unicode\")",
+      "Bash(\"/c/Program Files/Microsoft SQL Server Management Studio 22/Release/Common7/IDE/VSIXInstaller.exe\" /quiet /force \"c:\\\\Code\\\\SQLCompare\\\\src\\\\SQLParity.Vsix\\\\bin\\\\Debug\\\\SQLParity.Vsix.vsix\")",
+      "Bash(echo \"Exit code: $?\")",
+      "Bash(ls \"c:/Code/SQLCompare/src/SQLParity.Vsix/bin/Debug/\"*.vsixmanifest)",
+      "Bash(ls \"c:/Code/SQLCompare/src/SQLParity.Vsix/bin/Debug/extension\"*)",
+      "Bash(ls \"c:/Code/SQLCompare/src/SQLParity.Vsix/bin/Debug/\"*manifest*)",
+      "Bash(ls \"c:/Code/SQLCompare/src/SQLParity.Vsix/obj/Debug/\"*manifest*)",
+      "Bash(cmd //c \"\\\\\"C:\\\\Program Files\\\\Microsoft SQL Server Management Studio 22\\\\Release\\\\Common7\\\\IDE\\\\VSIXInstaller.exe\\\\\" /rootSuffix:Exp /force \\\\\"C:\\\\Code\\\\SQLCompare\\\\src\\\\SQLParity.Vsix\\\\bin\\\\Debug\\\\SQLParity.Vsix.vsix\\\\\"\")",
+      "Bash(\"/c/Program Files/Microsoft SQL Server Management Studio 22/Release/Common7/IDE/VSIXInstaller.exe\" /rootSuffix:Exp /force \"C:\\\\\\\\Code\\\\\\\\SQLCompare\\\\\\\\src\\\\\\\\SQLParity.Vsix\\\\\\\\bin\\\\\\\\Debug\\\\\\\\SQLParity.Vsix.vsix\")",
+      "Bash(\"/c/Program Files/Microsoft SQL Server Management Studio 22/Release/Common7/IDE/VSIXInstaller.exe\" /rootSuffix:Exp /force /logFile:\"c:/Code/SQLCompare/vsix_install.log\" \"C:\\\\\\\\Code\\\\\\\\SQLCompare\\\\\\\\src\\\\\\\\SQLParity.Vsix\\\\\\\\bin\\\\\\\\Debug\\\\\\\\SQLParity.Vsix.vsix\")",
+      "Bash(powershell -Command \"& 'C:\\\\Program Files\\\\Microsoft SQL Server Management Studio 22\\\\Release\\\\Common7\\\\IDE\\\\VSIXInstaller.exe' /rootSuffix:Exp 'C:\\\\Code\\\\SQLCompare\\\\src\\\\SQLParity.Vsix\\\\bin\\\\Debug\\\\SQLParity.Vsix.vsix'\")",
+      "Bash(powershell -Command \"Get-Content 'C:\\\\Users\\\\jmerritt\\\\AppData\\\\Roaming\\\\Microsoft\\\\SSMS\\\\21.0_ccea076b\\\\ActivityLog.xml' -Encoding Unicode | Select-String -Pattern 'SQLParity|a1b2c3d4|did not load|not load correctly' | Select-Object -Last 10\")",
+      "Bash(powershell -Command \"& 'C:\\\\Program Files\\\\Microsoft SQL Server Management Studio 22\\\\Release\\\\Common7\\\\IDE\\\\VSIXInstaller.exe' /uninstall:SQLParity.214618a2-e13a-49d0-a25a-ac0f2ae6e811\")",
+      "Bash(echo \"Uninstall exit: $?\")",
+      "Bash(\"C:\\\\Program Files\\\\Microsoft Visual Studio\\\\2022\\\\Professional\\\\MSBuild\\\\Current\\\\Bin\\\\MSBuild.exe\" \"c:\\\\Code\\\\SQLCompare\\\\SQLParity.sln\" -t:Build -p:Configuration=Debug -v:minimal)",
+      "Bash(python3:*)",
+      "Bash(powershell:*)",
+      "Bash(ls:*)",
+      "Bash(\"C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/MSBuild.exe\" SQLParity.sln -t:Build -p:Configuration=Debug -v:m)",
+      "Bash(\"/c/Program Files/Microsoft SQL Server Management Studio 22/Release/MSBuild/Current/Bin/MSBuild.exe\" SQLParity.sln -t:Build -p:Configuration=Debug -v:m)",
+      "Read(//c/Program Files/**)",
+      "Read(//c/Program Files \\(x86\\)/**)",
+      "Bash(\"/c/Program Files/Microsoft Visual Studio/2022/Professional/MSBuild/Current/Bin/MSBuild.exe\" /c/code/SQLCompare/SQLParity.sln -t:Build -p:Configuration=Debug -v:m)",
+      "Skill(update-config)",
+      "Bash(echo '{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"C:\\\\\\\\code\\\\\\\\SQLCompare\\\\\\\\src\\\\\\\\SQLParity.Vsix\\\\\\\\ViewModels\\\\\\\\ChangeTreeItemViewModel.cs\"}}')",
+      "Bash(\"/c/Program Files/Microsoft Visual Studio/2022/Professional/MSBuild/Current/Bin/MSBuild.exe\" /c/code/SQLCompare/SQLParity.sln -t:Build -p:Configuration=Debug -v:m -nologo)",
+      "Bash(grep:*)",
+      "Bash(curl -s http://localhost:5000/api)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/c/Program Files/Microsoft Visual Studio/2022/Professional/MSBuild/Current/Bin/MSBuild.exe\" /c/code/SQLCompare/SQLParity.sln -t:Build -p:Configuration=Debug -v:m -nologo 2>&1 | tail -5",
+            "timeout": 120,
+            "statusMessage": "Building SQLParity.sln..."
+          }
+        ]
+      }
+    ]
+  }
+}

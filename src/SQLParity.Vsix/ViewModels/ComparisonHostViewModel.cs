@@ -665,6 +665,16 @@ namespace SQLParity.Vsix.ViewModels
                 destination = SetupViewModel.SideA;
             }
 
+            // Folder-destination branch (A→B with Side B as a folder of .sql
+            // files). Writes per-object .sql files via FolderSyncWriter and
+            // bypasses the LiveApplier's DB-specific machinery (gauntlet,
+            // dependency ordering, transactions). See spec §3.4.
+            if (destination.IsFolderMode)
+            {
+                await ApplyFolderWriteAsync(source, destination, selectedChanges);
+                return;
+            }
+
             var connStr = destination.BuildConnectionString();
 
             var options = new ScriptGenerationOptions
@@ -776,6 +786,93 @@ namespace SQLParity.Vsix.ViewModels
             CurrentState = WorkflowState.ConnectionSetup;
             ProgressText = string.Empty;
             StatusMessage = "Configure both connections to begin.";
+        }
+
+        /// <summary>
+        /// A→B sync when Side B is a folder of .sql files. Drives
+        /// <see cref="FolderSyncWriter"/> with the folder context stashed
+        /// during the comparison read, then surfaces the manifest summary
+        /// and (best-effort) registers new files with the open SSMS solution.
+        /// </summary>
+        private async Task ApplyFolderWriteAsync(
+            ConnectionSideViewModel source,
+            ConnectionSideViewModel destination,
+            List<Change> selectedChanges)
+        {
+            if (_sideBFolderContext == null)
+            {
+                MessageBox.Show(
+                    "Folder context is missing — re-run the comparison and try again.",
+                    "SQLParity", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            // Pre-load DDL for any New tables — same logic as the live-DB path.
+            // Without this, "New" tables would have empty DdlSideA and the
+            // writer would emit a CREATE TABLE wrapper around nothing.
+            var tablesNeedingDdl = selectedChanges
+                .Where(c => c.ObjectType == ObjectType.Table
+                    && c.Status == ChangeStatus.New
+                    && string.IsNullOrEmpty(c.DdlSideA))
+                .ToList();
+
+            if (tablesNeedingDdl.Count > 0)
+            {
+                ProgressText = $"Loading DDL for {tablesNeedingDdl.Count} tables...";
+                ProgressValue = 0;
+                ProgressMaximum = tablesNeedingDdl.Count;
+
+                var sourceConnStr = source.BuildConnectionString();
+                var sourceDbName = source.DatabaseName;
+
+                await Task.Run(() =>
+                {
+                    var reader = new SQLParity.Core.SchemaReader(sourceConnStr, sourceDbName);
+                    foreach (var change in tablesNeedingDdl)
+                    {
+                        try { change.DdlSideA = reader.ScriptTable(change.Id.Schema, change.Id.Name); }
+                        catch { /* per-table failures surface as empty CREATE blocks */ }
+                    }
+                });
+            }
+
+            ProgressText = $"Writing {selectedChanges.Count} change(s) to {destination.FolderPath}...";
+            ProgressValue = 0;
+            ProgressMaximum = 0;
+
+            WriteManifest manifest = await Task.Run(() =>
+            {
+                var writer = new FolderSyncWriter();
+                return writer.WriteChanges(
+                    selectedChanges,
+                    _sideBFolderContext,
+                    sourceServerName: source.ServerName,
+                    sourceDatabaseName: source.DatabaseName,
+                    nowUtc: DateTime.UtcNow);
+            });
+
+            ProgressText = string.Empty;
+
+            string summary = string.Format(
+                "Folder sync complete.\n\n  Updated: {0}\n  Created: {1}\n  Commented out: {2}\n  Skipped: {3}\n  Errors: {4}\n\nRe-run the comparison to refresh the change list.",
+                manifest.FilesUpdated.Count,
+                manifest.FilesCreated.Count,
+                manifest.FilesCommentedOut.Count,
+                manifest.Skipped.Count,
+                manifest.Errors.Count);
+
+            if (manifest.Errors.Count > 0)
+                summary += "\n\nFirst error: " + manifest.Errors[0];
+
+            MessageBox.Show(summary, "SQLParity",
+                MessageBoxButton.OK,
+                manifest.Errors.Count > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
+
+            // Note: Solution Explorer does not auto-refresh when files appear
+            // on disk inside its folder. v1.2 ships without programmatic SE
+            // registration — the user can right-click the folder in SE and
+            // "Refresh" to see new files. Auto-registration via the DTE
+            // ProjectItems API is a v1.3 follow-up.
         }
 
         /// <summary>

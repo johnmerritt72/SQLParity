@@ -56,8 +56,7 @@ Notes:
 ### Uninstall
 
 ```powershell
-& "C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\VSIXInstaller.exe" `
-    /uninstall:SQLParity.214618a2-e13a-49d0-a25a-ac0f2ae6e811
+& "C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\VSIXInstaller.exe" /uninstall:SQLParity.214618a2-e13a-49d0-a25a-ac0f2ae6e811 /instanceIds:919b8d66
 ```
 
 If the uninstaller leaves files behind in `C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\Extensions\<random>\`, delete that folder manually (with admin rights).

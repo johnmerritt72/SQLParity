@@ -60,6 +60,34 @@ public class SchemaComparatorTests
         Ddl = ddl,
     };
 
+    private static UserDefinedFunctionModel MakeFunc(string schema, string name, string ddl = "CREATE FUNCTION ...") => new()
+    {
+        Id = SchemaQualifiedName.TopLevel(schema, name),
+        Schema = schema,
+        Name = name,
+        Kind = FunctionKind.Scalar,
+        Ddl = ddl,
+    };
+
+    private static DatabaseSchema WithFuncs(DatabaseSchema schema, params UserDefinedFunctionModel[] funcs)
+    {
+        return new DatabaseSchema
+        {
+            ServerName = schema.ServerName,
+            DatabaseName = schema.DatabaseName,
+            ReadAtUtc = schema.ReadAtUtc,
+            Schemas = schema.Schemas,
+            Tables = schema.Tables,
+            Views = schema.Views,
+            StoredProcedures = schema.StoredProcedures,
+            Functions = funcs,
+            Sequences = schema.Sequences,
+            Synonyms = schema.Synonyms,
+            UserDefinedDataTypes = schema.UserDefinedDataTypes,
+            UserDefinedTableTypes = schema.UserDefinedTableTypes,
+        };
+    }
+
     private static ColumnModel MakeColumn(
         string table,
         string name,
@@ -381,5 +409,364 @@ public class SchemaComparatorTests
         Assert.Equal(RiskTier.Destructive, change.Risk);
         Assert.NotNull(change.PreFlightSql);
         Assert.Contains("SELECT COUNT(*)", change.PreFlightSql);
+    }
+
+    [Fact]
+    public void StoredProc_CommentOnlyDifference_StillModifiedByDefault()
+    {
+        var procA = MakeProc("dbo", "GetOrders",
+            "CREATE PROC GetOrders AS\n-- updated 2026\nSELECT 1");
+        var procB = MakeProc("dbo", "GetOrders",
+            "CREATE PROC GetOrders AS\n-- updated 2025\nSELECT 1");
+        var a = WithProcs(EmptySchema("DbA"), procA);
+        var b = WithProcs(EmptySchema("DbB"), procB);
+
+        var result = SchemaComparator.Compare(a, b);
+
+        Assert.Single(result.Changes);
+    }
+
+    [Fact]
+    public void StoredProc_CommentOnlyDifference_SuppressedWhenIgnoreCommentsEnabled()
+    {
+        var procA = MakeProc("dbo", "GetOrders",
+            "CREATE PROC GetOrders AS\n-- updated 2026\nSELECT 1");
+        var procB = MakeProc("dbo", "GetOrders",
+            "CREATE PROC GetOrders AS\n/* version 2 */\nSELECT 1");
+        var a = WithProcs(EmptySchema("DbA"), procA);
+        var b = WithProcs(EmptySchema("DbB"), procB);
+
+        var result = SchemaComparator.Compare(a, b, SchemaReadOptions.All, ignoreCommentsInStoredProcedures: true);
+
+        Assert.Empty(result.Changes);
+    }
+
+    [Fact]
+    public void StoredProc_RealCodeDifference_StillReportedWhenIgnoreCommentsEnabled()
+    {
+        var procA = MakeProc("dbo", "GetOrders",
+            "CREATE PROC GetOrders AS\n-- comment\nSELECT 1");
+        var procB = MakeProc("dbo", "GetOrders",
+            "CREATE PROC GetOrders AS\n-- comment\nSELECT 2");
+        var a = WithProcs(EmptySchema("DbA"), procA);
+        var b = WithProcs(EmptySchema("DbB"), procB);
+
+        var result = SchemaComparator.Compare(a, b, SchemaReadOptions.All, ignoreCommentsInStoredProcedures: true);
+
+        var change = Assert.Single(result.Changes);
+        Assert.Equal(ChangeStatus.Modified, change.Status);
+    }
+
+    [Fact]
+    public void StoredProc_CommentLikeStringInsideLiteral_NotStripped()
+    {
+        var procA = MakeProc("dbo", "WriteLog",
+            "CREATE PROC WriteLog AS SELECT '-- not a comment'");
+        var procB = MakeProc("dbo", "WriteLog",
+            "CREATE PROC WriteLog AS SELECT '-- different'");
+        var a = WithProcs(EmptySchema("DbA"), procA);
+        var b = WithProcs(EmptySchema("DbB"), procB);
+
+        var result = SchemaComparator.Compare(a, b, SchemaReadOptions.All, ignoreCommentsInStoredProcedures: true);
+
+        Assert.Single(result.Changes);
+    }
+
+    [Fact]
+    public void StoredProc_WhitespaceOnlyDifference_OutsideLiterals_SuppressedWhenOptionEnabled()
+    {
+        var procA = MakeProc("dbo", "GetOrders",
+            "CREATE PROC GetOrders AS\n    SELECT     1,    2\n    FROM     dbo.Orders");
+        var procB = MakeProc("dbo", "GetOrders",
+            "CREATE PROC GetOrders AS SELECT 1, 2 FROM dbo.Orders");
+        var a = WithProcs(EmptySchema("DbA"), procA);
+        var b = WithProcs(EmptySchema("DbB"), procB);
+
+        var result = SchemaComparator.Compare(
+            a, b, SchemaReadOptions.All,
+            ignoreCommentsInStoredProcedures: false,
+            ignoreWhitespaceInStoredProcedures: true);
+
+        Assert.Empty(result.Changes);
+    }
+
+    [Fact]
+    public void StoredProc_WhitespaceDifferenceInsideLiteral_StillReportedWhenIgnoreWhitespaceEnabled()
+    {
+        var procA = MakeProc("dbo", "WriteLog",
+            "CREATE PROC WriteLog AS SELECT 'Hello   World'");
+        var procB = MakeProc("dbo", "WriteLog",
+            "CREATE PROC WriteLog AS SELECT 'Hello World'");
+        var a = WithProcs(EmptySchema("DbA"), procA);
+        var b = WithProcs(EmptySchema("DbB"), procB);
+
+        var result = SchemaComparator.Compare(
+            a, b, SchemaReadOptions.All,
+            ignoreCommentsInStoredProcedures: false,
+            ignoreWhitespaceInStoredProcedures: true);
+
+        var change = Assert.Single(result.Changes);
+        Assert.Equal(ChangeStatus.Modified, change.Status);
+    }
+
+    [Fact]
+    public void StoredProc_RealCodeDifference_StillReportedWhenIgnoreWhitespaceEnabled()
+    {
+        var procA = MakeProc("dbo", "GetOrders",
+            "CREATE PROC GetOrders AS SELECT 1");
+        var procB = MakeProc("dbo", "GetOrders",
+            "CREATE PROC GetOrders AS SELECT 2");
+        var a = WithProcs(EmptySchema("DbA"), procA);
+        var b = WithProcs(EmptySchema("DbB"), procB);
+
+        var result = SchemaComparator.Compare(
+            a, b, SchemaReadOptions.All,
+            ignoreCommentsInStoredProcedures: false,
+            ignoreWhitespaceInStoredProcedures: true);
+
+        Assert.Single(result.Changes);
+    }
+
+    [Fact]
+    public void StoredProc_QuoteInsideLineComment_DoesNotConfuseLiteralParsing()
+    {
+        // -- it's a comment ... a stray quote inside a comment must not start
+        // a fake string literal that swallows surrounding code.
+        var procA = MakeProc("dbo", "GetOrders",
+            "CREATE PROC GetOrders AS\n-- it's broken\nSELECT     1");
+        var procB = MakeProc("dbo", "GetOrders",
+            "CREATE PROC GetOrders AS\n-- it's broken\nSELECT 1");
+        var a = WithProcs(EmptySchema("DbA"), procA);
+        var b = WithProcs(EmptySchema("DbB"), procB);
+
+        var result = SchemaComparator.Compare(
+            a, b, SchemaReadOptions.All,
+            ignoreCommentsInStoredProcedures: false,
+            ignoreWhitespaceInStoredProcedures: true);
+
+        Assert.Empty(result.Changes);
+    }
+
+    [Fact]
+    public void StoredProc_BothOptionsEnabled_StripsCommentsAndCollapsesWhitespace()
+    {
+        var procA = MakeProc("dbo", "GetOrders",
+            "CREATE PROC GetOrders AS\n  -- v1\n  SELECT     1");
+        var procB = MakeProc("dbo", "GetOrders",
+            "CREATE PROC GetOrders AS /* v2 */ SELECT 1");
+        var a = WithProcs(EmptySchema("DbA"), procA);
+        var b = WithProcs(EmptySchema("DbB"), procB);
+
+        var result = SchemaComparator.Compare(
+            a, b, SchemaReadOptions.All,
+            ignoreCommentsInStoredProcedures: true,
+            ignoreWhitespaceInStoredProcedures: true);
+
+        Assert.Empty(result.Changes);
+    }
+
+    [Fact]
+    public void StoredProc_BracketedAndUnbracketedNames_TreatedIdenticalWhenOptionEnabled()
+    {
+        var procA = MakeProc("dbo", "TestProc", "CREATE PROC [dbo].[TestProc] AS SELECT 1");
+        var procB = MakeProc("dbo", "TestProc", "CREATE PROC dbo.TestProc AS SELECT 1");
+        var a = WithProcs(EmptySchema("DbA"), procA);
+        var b = WithProcs(EmptySchema("DbB"), procB);
+
+        var result = SchemaComparator.Compare(
+            a, b, SchemaReadOptions.All,
+            ignoreOptionalBrackets: true);
+
+        Assert.Empty(result.Changes);
+    }
+
+    [Fact]
+    public void StoredProc_BracketedAndUnbracketedNames_StillModifiedByDefault()
+    {
+        var procA = MakeProc("dbo", "TestProc", "CREATE PROC [dbo].[TestProc] AS SELECT 1");
+        var procB = MakeProc("dbo", "TestProc", "CREATE PROC dbo.TestProc AS SELECT 1");
+        var a = WithProcs(EmptySchema("DbA"), procA);
+        var b = WithProcs(EmptySchema("DbB"), procB);
+
+        var result = SchemaComparator.Compare(a, b);
+
+        Assert.Single(result.Changes);
+    }
+
+    [Fact]
+    public void View_BracketStripping_AppliesToOtherObjectTypes()
+    {
+        var viewA = MakeView("dbo", "OrderSummary",
+            "CREATE VIEW [dbo].[OrderSummary] AS SELECT 1 FROM [dbo].[Orders]");
+        var viewB = MakeView("dbo", "OrderSummary",
+            "CREATE VIEW dbo.OrderSummary AS SELECT 1 FROM dbo.Orders");
+        var a = WithViews(EmptySchema("DbA"), viewA);
+        var b = WithViews(EmptySchema("DbB"), viewB);
+
+        var result = SchemaComparator.Compare(
+            a, b, SchemaReadOptions.All,
+            ignoreOptionalBrackets: true);
+
+        Assert.Empty(result.Changes);
+    }
+
+    [Fact]
+    public void BracketStripping_ReservedKeywordKeepsBrackets()
+    {
+        // [Order] is a reserved keyword — bracket-stripping must not produce
+        // bare 'Order', which would parse as the keyword and break the query.
+        var viewA = MakeView("dbo", "Reports",
+            "CREATE VIEW [dbo].[Reports] AS SELECT * FROM [dbo].[Order]");
+        var viewB = MakeView("dbo", "Reports",
+            "CREATE VIEW dbo.Reports AS SELECT * FROM dbo.[Order]");
+        var a = WithViews(EmptySchema("DbA"), viewA);
+        var b = WithViews(EmptySchema("DbB"), viewB);
+
+        var result = SchemaComparator.Compare(
+            a, b, SchemaReadOptions.All,
+            ignoreOptionalBrackets: true);
+
+        // [dbo] dropped on both, [Order] kept on both → should collapse to same.
+        Assert.Empty(result.Changes);
+    }
+
+    [Fact]
+    public void BracketStripping_NameWithSpaceKeepsBrackets()
+    {
+        // [Order Details] cannot be unbracketed — has a space.
+        var viewA = MakeView("dbo", "Sales",
+            "CREATE VIEW [dbo].[Sales] AS SELECT * FROM [dbo].[Order Details]");
+        var viewB = MakeView("dbo", "Sales",
+            "CREATE VIEW dbo.Sales AS SELECT * FROM dbo.[Order Details]");
+        var a = WithViews(EmptySchema("DbA"), viewA);
+        var b = WithViews(EmptySchema("DbB"), viewB);
+
+        var result = SchemaComparator.Compare(
+            a, b, SchemaReadOptions.All,
+            ignoreOptionalBrackets: true);
+
+        Assert.Empty(result.Changes);
+    }
+
+    [Fact]
+    public void Function_CommentOnlyDifference_SuppressedWhenIgnoreCommentsEnabled()
+    {
+        // Mirrors the user-reported case: a UDF whose only material difference
+        // is a number inside a comment. With "ignore comments" on, the routine
+        // normalizer (which now applies to functions, not just stored procs)
+        // strips comments before the equality check.
+        var funcA = MakeFunc("centurion", "GetSerial",
+            "\nCREATE FUNCTION centurion.GetSerial(@id int) RETURNS bigint AS\n" +
+            "-- SELECT centurion.GetSerial(37500067)\n" +
+            "BEGIN RETURN 1 END\n");
+        var funcB = MakeFunc("centurion", "GetSerial",
+            "CREATE FUNCTION centurion.GetSerial(@id int) RETURNS bigint AS\n" +
+            "-- SELECT centurion.GetSerial(37010225)\n" +
+            "BEGIN RETURN 1 END");
+        var a = WithFuncs(EmptySchema("DbA"), funcA);
+        var b = WithFuncs(EmptySchema("DbB"), funcB);
+
+        var result = SchemaComparator.Compare(
+            a, b, SchemaReadOptions.All,
+            ignoreCommentsInStoredProcedures: true,
+            ignoreWhitespaceInStoredProcedures: true);
+
+        Assert.Empty(result.Changes);
+    }
+
+    [Fact]
+    public void Function_RealUserScenario_WithAllThreeOptionsOn_NotModified()
+    {
+        // Reconstructed from the screenshot the user shared. The two sides
+        // differ only inside a comment (the constant 37010225 vs 37500067),
+        // a few whitespace placements, line wraps, and a leading blank line.
+        // With ignore-comments + ignore-whitespace + ignore-brackets all on,
+        // no Change should be reported.
+        const string headerA =
+            "\n" +
+            "-- =================================================\n" +
+            "-- Author:        Roy Lawson\n" +
+            "-- Create date: 6/6/2024\n" +
+            "-- Description: Scalar function that returns the Centurion serial number by DeviceId\n" +
+            "-- Revisions:\n" +
+            "-- 5/20/2025:   JMM    - Remove dash in serial number to support aWatches\n" +
+            "-- SELECT [centurion].[GetCenturionSerialNumberByDeviceId](37500067)\n" +
+            "-- =================================================\n";
+
+        const string headerB =
+            "-- =================================================\n" +
+            "-- Author:        Roy Lawson\n" +
+            "-- Create date: 6/6/2024\n" +
+            "-- Description: Scalar function that returns the Centurion serial number by DeviceId\n" +
+            "-- Revisions:\n" +
+            "-- 5/20/2025:   JMM    - Remove dash in serial number to support aWatches\n" +
+            "-- SELECT [centurion].[GetCenturionSerialNumberByDeviceId](37010225)\n" +
+            "-- =================================================\n";
+
+        const string body =
+            "CREATE   FUNCTION [centurion].[GetCenturionSerialNumberByDeviceId](@DeviceId int)\n" +
+            "RETURNS bigint\n" +
+            "AS\n" +
+            "BEGIN\n" +
+            "DECLARE @Result bigint = 0;\n" +
+            "\n" +
+            "Select @Result = max(centurion.fn_SerialNumberToInt(AllDevices.SerialNumber))\n" +
+            "FROM [dbo].[View_AllDevices]   as AllDevices with(nolock)\n" +
+            "where DeviceId = @DeviceId;\n" +
+            "\n" +
+            "if @Result is null or @Result = 0\n" +
+            "begin\n" +
+            "  select @Result = max(CenturionSerialNumber) from [centurion].[CenturionDevices] with(nolock) where DeviceId = @DeviceId\n" +
+            "end\n" +
+            "\n" +
+            "RETURN (coalesce(@Result,0))\n" +
+            "END";
+
+        var funcA = MakeFunc("centurion", "GetCenturionSerialNumberByDeviceId", headerA + body);
+        var funcB = MakeFunc("centurion", "GetCenturionSerialNumberByDeviceId", headerB + body + "\n");
+        var a = WithFuncs(EmptySchema("DbA"), funcA);
+        var b = WithFuncs(EmptySchema("DbB"), funcB);
+
+        var result = SchemaComparator.Compare(
+            a, b, SchemaReadOptions.All,
+            ignoreCommentsInStoredProcedures: true,
+            ignoreWhitespaceInStoredProcedures: true,
+            ignoreOptionalBrackets: true);
+
+        Assert.Empty(result.Changes);
+    }
+
+    [Fact]
+    public void Function_CommentOnlyDifference_StillModifiedByDefault()
+    {
+        var funcA = MakeFunc("dbo", "Calc",
+            "CREATE FUNCTION dbo.Calc() RETURNS int AS BEGIN -- v1\n RETURN 1 END");
+        var funcB = MakeFunc("dbo", "Calc",
+            "CREATE FUNCTION dbo.Calc() RETURNS int AS BEGIN -- v2\n RETURN 1 END");
+        var a = WithFuncs(EmptySchema("DbA"), funcA);
+        var b = WithFuncs(EmptySchema("DbB"), funcB);
+
+        var result = SchemaComparator.Compare(a, b);
+
+        Assert.Single(result.Changes);
+    }
+
+    [Fact]
+    public void BracketStripping_DoesNotTouchBracketsInsideStringLiteral()
+    {
+        // The literal '[dbo].[X]' is data, not an identifier — must stay intact.
+        // Side A and B differ in the literal so they must still be Modified.
+        var procA = MakeProc("dbo", "WriteLog",
+            "CREATE PROC [dbo].[WriteLog] AS SELECT '[dbo].[Foo]'");
+        var procB = MakeProc("dbo", "WriteLog",
+            "CREATE PROC dbo.WriteLog AS SELECT '[dbo].[Bar]'");
+        var a = WithProcs(EmptySchema("DbA"), procA);
+        var b = WithProcs(EmptySchema("DbB"), procB);
+
+        var result = SchemaComparator.Compare(
+            a, b, SchemaReadOptions.All,
+            ignoreOptionalBrackets: true);
+
+        Assert.Single(result.Changes);
     }
 }

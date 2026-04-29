@@ -68,7 +68,10 @@
       "Bash(echo '{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"C:\\\\\\\\code\\\\\\\\SQLCompare\\\\\\\\src\\\\\\\\SQLParity.Vsix\\\\\\\\ViewModels\\\\\\\\ChangeTreeItemViewModel.cs\"}}')",
       "Bash(\"/c/Program Files/Microsoft Visual Studio/2022/Professional/MSBuild/Current/Bin/MSBuild.exe\" /c/code/SQLCompare/SQLParity.sln -t:Build -p:Configuration=Debug -v:m -nologo)",
       "Bash(grep:*)",
-      "Bash(curl -s http://localhost:5000/api)"
+      "Bash(curl -s http://localhost:5000/api)",
+      "Bash(MSBuild.exe -nologo -v:minimal -p:Configuration=Debug src/SQLParity.Vsix/SQLParity.Vsix.csproj)",
+      "PowerShell(dotnet test \"tests\\\\SQLParity.Core.Tests\\\\SQLParity.Core.Tests.csproj\" --nologo --filter \"FullyQualifiedName~SchemaComparatorTests\" 2>&1)",
+      "PowerShell(Get-ChildItem -Path \"$env:LOCALAPPDATA\\\\Microsoft\\\\SSMS\",\"$env:ProgramFiles\\\\Microsoft SQL Server Management Studio 22\",\"$env:ProgramData\\\\Microsoft\\\\SSMS\" -Recurse -Filter \"SQLParity.Vsix.dll\" -ErrorAction SilentlyContinue | Select-Object FullName, @{N='Version';E={\\(Get-Item $_.FullName\\).VersionInfo.FileVersion}}, LastWriteTime | Format-Table -AutoSize)"
     ]
   },
   "hooks": {

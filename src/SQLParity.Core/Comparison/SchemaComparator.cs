@@ -14,67 +14,98 @@ public static class SchemaComparator
         return Compare(sideA, sideB, SchemaReadOptions.All);
     }
 
-    public static ComparisonResult Compare(DatabaseSchema sideA, DatabaseSchema sideB, SchemaReadOptions options)
+    public static ComparisonResult Compare(
+        DatabaseSchema sideA,
+        DatabaseSchema sideB,
+        SchemaReadOptions options,
+        bool ignoreCommentsInStoredProcedures = false,
+        bool ignoreWhitespaceInStoredProcedures = false,
+        bool ignoreOptionalBrackets = false)
     {
         options = options ?? SchemaReadOptions.All;
         var changes = new List<Change>();
 
+        // The "general" normalizer applies to every object type. When the
+        // user opts in, we strip optional square brackets first so that
+        // [dbo].[Foo] and dbo.Foo collapse to the same canonical form.
+        Func<string, string> generalNormalizer = ignoreOptionalBrackets
+            ? (Func<string, string>)(s => NormalizeDdl(StripOptionalSqlBrackets(s)))
+            : NormalizeDdl;
+
         // Tables
         if (options.IncludeTables)
-            changes.AddRange(CompareTables(sideA.Tables, sideB.Tables));
+            changes.AddRange(CompareTables(sideA.Tables, sideB.Tables, generalNormalizer));
 
         // Views
         if (options.IncludeViews)
             changes.AddRange(CompareById(
                 sideA.Views, sideB.Views,
                 ObjectType.View,
-                v => v.Id, v => v.Ddl));
+                v => v.Id, v => v.Ddl,
+                generalNormalizer));
 
-        // Stored Procedures
+        // Stored procedures and user-defined functions are both "routines" —
+        // textual T-SQL bodies. They share the same routine-level normalizer,
+        // which composes (in order) optional comment removal, optional bracket
+        // stripping, and either literal-aware whitespace collapsing or the
+        // standard whitespace-aggressive normalize. Tables, views, schemas,
+        // etc. continue to use the general normalizer (no comment/whitespace
+        // skipping). The Change still carries the original DDL so the diff
+        // panel always shows the source.
+        Func<string, string> routineNormalizer = BuildRoutineNormalizer(
+            ignoreCommentsInStoredProcedures,
+            ignoreWhitespaceInStoredProcedures,
+            ignoreOptionalBrackets);
+
         if (options.IncludeStoredProcedures)
             changes.AddRange(CompareById(
                 sideA.StoredProcedures, sideB.StoredProcedures,
                 ObjectType.StoredProcedure,
-                p => p.Id, p => p.Ddl));
+                p => p.Id, p => p.Ddl,
+                routineNormalizer));
 
-        // Functions
         if (options.IncludeFunctions)
             changes.AddRange(CompareById(
                 sideA.Functions, sideB.Functions,
                 ObjectType.UserDefinedFunction,
-                f => f.Id, f => f.Ddl));
+                f => f.Id, f => f.Ddl,
+                routineNormalizer));
 
         // Sequences
         if (options.IncludeSequences)
             changes.AddRange(CompareById(
                 sideA.Sequences, sideB.Sequences,
                 ObjectType.Sequence,
-                s => s.Id, s => s.Ddl));
+                s => s.Id, s => s.Ddl,
+                generalNormalizer));
 
         // Synonyms
         if (options.IncludeSynonyms)
             changes.AddRange(CompareById(
                 sideA.Synonyms, sideB.Synonyms,
                 ObjectType.Synonym,
-                s => s.Id, s => s.Ddl));
+                s => s.Id, s => s.Ddl,
+                generalNormalizer));
 
         // UserDefinedDataTypes
         if (options.IncludeUserDefinedDataTypes)
             changes.AddRange(CompareById(
                 sideA.UserDefinedDataTypes, sideB.UserDefinedDataTypes,
                 ObjectType.UserDefinedDataType,
-                t => t.Id, t => t.Ddl));
+                t => t.Id, t => t.Ddl,
+                generalNormalizer));
 
         // UserDefinedTableTypes
         if (options.IncludeUserDefinedTableTypes)
             changes.AddRange(CompareById(
                 sideA.UserDefinedTableTypes, sideB.UserDefinedTableTypes,
                 ObjectType.UserDefinedTableType,
-                t => t.Id, t => t.Ddl));
+                t => t.Id, t => t.Ddl,
+                generalNormalizer));
 
         // Schemas (match by Name, case-insensitive)
         if (options.IncludeSchemas)
-            changes.AddRange(CompareSchemas(sideA.Schemas, sideB.Schemas));
+            changes.AddRange(CompareSchemas(sideA.Schemas, sideB.Schemas, generalNormalizer));
 
         // Classify column-level risk first so RiskClassifier can aggregate them.
         foreach (var change in changes)
@@ -152,7 +183,8 @@ public static class SchemaComparator
 
     private static IEnumerable<Change> CompareTables(
         IReadOnlyList<TableModel> tablesA,
-        IReadOnlyList<TableModel> tablesB)
+        IReadOnlyList<TableModel> tablesB,
+        Func<string, string> ddlNormalizer)
     {
         var dictA = BuildDictionary(tablesA, t => t.Id);
         var dictB = BuildDictionary(tablesB, t => t.Id);
@@ -201,7 +233,7 @@ public static class SchemaComparator
                     tableA.Id.Schema, tableA.Name,
                     tableA.Columns, tableB.Columns);
 
-                bool ddlDiffers = !string.Equals(NormalizeDdl(tableA.Ddl), NormalizeDdl(tableB.Ddl), StringComparison.Ordinal);
+                bool ddlDiffers = !string.Equals(ddlNormalizer(tableA.Ddl), ddlNormalizer(tableB.Ddl), StringComparison.Ordinal);
 
                 if (ddlDiffers || columnChanges.Count > 0)
                 {
@@ -224,8 +256,10 @@ public static class SchemaComparator
         IReadOnlyList<T> listB,
         ObjectType objectType,
         Func<T, SchemaQualifiedName> idSelector,
-        Func<T, string> ddlSelector)
+        Func<T, string> ddlSelector,
+        Func<string, string>? ddlNormalizer = null)
     {
+        var normalize = ddlNormalizer ?? NormalizeDdl;
         var dictA = BuildDictionary(listA, idSelector);
         var dictB = BuildDictionary(listB, idSelector);
 
@@ -269,7 +303,7 @@ public static class SchemaComparator
             var itemA = kvpA2.Value;
             if (dictB.TryGetValue(kvpA2.Key, out var itemB))
             {
-                if (!string.Equals(NormalizeDdl(ddlSelector(itemA)), NormalizeDdl(ddlSelector(itemB)), StringComparison.Ordinal))
+                if (!string.Equals(normalize(ddlSelector(itemA)), normalize(ddlSelector(itemB)), StringComparison.Ordinal))
                 {
                     yield return new Change
                     {
@@ -287,7 +321,8 @@ public static class SchemaComparator
 
     private static IEnumerable<Change> CompareSchemas(
         IReadOnlyList<SchemaModel> schemasA,
-        IReadOnlyList<SchemaModel> schemasB)
+        IReadOnlyList<SchemaModel> schemasB,
+        Func<string, string> ddlNormalizer)
     {
         var dictA = BuildDictionary(schemasA, s => s.Name, StringComparer.OrdinalIgnoreCase);
         var dictB = BuildDictionary(schemasB, s => s.Name, StringComparer.OrdinalIgnoreCase);
@@ -332,7 +367,7 @@ public static class SchemaComparator
             var schemaA = kvpA2.Value;
             if (dictB.TryGetValue(kvpA2.Key, out var schemaB))
             {
-                if (!string.Equals(NormalizeDdl(schemaA.Ddl), NormalizeDdl(schemaB.Ddl), StringComparison.Ordinal))
+                if (!string.Equals(ddlNormalizer(schemaA.Ddl), ddlNormalizer(schemaB.Ddl), StringComparison.Ordinal))
                 {
                     yield return new Change
                     {
@@ -402,5 +437,418 @@ public static class SchemaComparator
             normalized.AppendLine(trimmed.ToLowerInvariant());
         }
         return normalized.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// Removes square brackets from any T-SQL identifier <c>[name]</c> where the
+    /// brackets are optional — i.e. <c>name</c> is a regular identifier (letter
+    /// or underscore start, then alphanumerics / _ / @ / # / $) AND is not a
+    /// T-SQL reserved keyword. Identifiers that need their brackets (reserved
+    /// words like <c>[Order]</c>, names with spaces, escapes, or special chars)
+    /// are preserved verbatim. Single-quoted string literals are skipped so
+    /// that bracket characters inside data ('foo[bar]') are never altered.
+    /// </summary>
+    internal static string StripOptionalSqlBrackets(string sql)
+    {
+        if (string.IsNullOrEmpty(sql)) return string.Empty;
+
+        var sb = new System.Text.StringBuilder(sql.Length);
+        int n = sql.Length;
+        int i = 0;
+
+        while (i < n)
+        {
+            char c = sql[i];
+
+            // String literal — copy verbatim, including any [ or ] inside.
+            if (c == '\'')
+            {
+                sb.Append(c);
+                i++;
+                while (i < n)
+                {
+                    if (sql[i] == '\'' && i + 1 < n && sql[i + 1] == '\'')
+                    {
+                        sb.Append("''");
+                        i += 2;
+                    }
+                    else if (sql[i] == '\'')
+                    {
+                        sb.Append('\'');
+                        i++;
+                        break;
+                    }
+                    else
+                    {
+                        sb.Append(sql[i]);
+                        i++;
+                    }
+                }
+                continue;
+            }
+
+            // Bracketed identifier — find the matching ']' (with ']]' escape)
+            // and decide whether the name inside still needs the brackets.
+            if (c == '[')
+            {
+                int contentStart = i + 1;
+                int j = contentStart;
+                bool foundClose = false;
+                while (j < n)
+                {
+                    if (sql[j] == ']' && j + 1 < n && sql[j + 1] == ']')
+                    {
+                        j += 2;
+                        continue;
+                    }
+                    if (sql[j] == ']')
+                    {
+                        foundClose = true;
+                        break;
+                    }
+                    j++;
+                }
+
+                if (foundClose)
+                {
+                    string inner = sql.Substring(contentStart, j - contentStart);
+                    if (CanUnbracketIdentifier(inner))
+                        sb.Append(inner);
+                    else
+                        sb.Append(sql, i, j - i + 1); // keep [name] verbatim
+                    i = j + 1;
+                    continue;
+                }
+
+                // Unmatched '[' — leave it as-is and move on.
+                sb.Append(c);
+                i++;
+                continue;
+            }
+
+            sb.Append(c);
+            i++;
+        }
+
+        return sb.ToString();
+    }
+
+    private static bool CanUnbracketIdentifier(string ident)
+    {
+        if (string.IsNullOrEmpty(ident)) return false;
+        char first = ident[0];
+        if (!(IsAsciiLetter(first) || first == '_')) return false;
+        for (int k = 1; k < ident.Length; k++)
+        {
+            char ch = ident[k];
+            if (!(IsAsciiLetter(ch) || (ch >= '0' && ch <= '9')
+                  || ch == '_' || ch == '@' || ch == '#' || ch == '$'))
+                return false;
+        }
+        return !ReservedKeywords.Contains(ident);
+    }
+
+    private static bool IsAsciiLetter(char c)
+        => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+
+    /// <summary>
+    /// T-SQL reserved keywords (Books Online). Used by
+    /// <see cref="StripOptionalSqlBrackets"/> to keep brackets around names
+    /// that would be parse errors without them. Case-insensitive lookup.
+    /// </summary>
+    private static readonly HashSet<string> ReservedKeywords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "ADD","ALL","ALTER","AND","ANY","AS","ASC","AUTHORIZATION","BACKUP","BEGIN",
+        "BETWEEN","BREAK","BROWSE","BULK","BY","CASCADE","CASE","CHECK","CHECKPOINT",
+        "CLOSE","CLUSTERED","COALESCE","COLLATE","COLUMN","COMMIT","COMPUTE",
+        "CONSTRAINT","CONTAINS","CONTAINSTABLE","CONTINUE","CONVERT","CREATE","CROSS",
+        "CURRENT","CURRENT_DATE","CURRENT_TIME","CURRENT_TIMESTAMP","CURRENT_USER",
+        "CURSOR","DATABASE","DBCC","DEALLOCATE","DECLARE","DEFAULT","DELETE","DENY",
+        "DESC","DISK","DISTINCT","DISTRIBUTED","DOUBLE","DROP","DUMP","ELSE","END",
+        "ERRLVL","ESCAPE","EXCEPT","EXEC","EXECUTE","EXISTS","EXIT","EXTERNAL",
+        "FETCH","FILE","FILLFACTOR","FOR","FOREIGN","FREETEXT","FREETEXTTABLE","FROM",
+        "FULL","FUNCTION","GOTO","GRANT","GROUP","HAVING","HOLDLOCK","IDENTITY",
+        "IDENTITY_INSERT","IDENTITYCOL","IF","IN","INDEX","INNER","INSERT","INTERSECT",
+        "INTO","IS","JOIN","KEY","KILL","LEFT","LIKE","LINENO","LOAD","MERGE",
+        "NATIONAL","NOCHECK","NONCLUSTERED","NOT","NULL","NULLIF","OF","OFF","OFFSETS",
+        "ON","OPEN","OPENDATASOURCE","OPENQUERY","OPENROWSET","OPENXML","OPTION","OR",
+        "ORDER","OUTER","OVER","PERCENT","PIVOT","PLAN","PRECISION","PRIMARY","PRINT",
+        "PROC","PROCEDURE","PUBLIC","RAISERROR","READ","READTEXT","RECONFIGURE",
+        "REFERENCES","REPLICATION","RESTORE","RESTRICT","RETURN","REVERT","REVOKE",
+        "RIGHT","ROLLBACK","ROWCOUNT","ROWGUIDCOL","RULE","SAVE","SCHEMA",
+        "SECURITYAUDIT","SELECT","SEMANTICKEYPHRASETABLE",
+        "SEMANTICSIMILARITYDETAILSTABLE","SEMANTICSIMILARITYTABLE","SESSION_USER",
+        "SET","SETUSER","SHUTDOWN","SOME","STATISTICS","SYSTEM_USER","TABLE",
+        "TABLESAMPLE","TEXTSIZE","THEN","TO","TOP","TRAN","TRANSACTION","TRIGGER",
+        "TRUNCATE","TRY_CONVERT","TSEQUAL","UNION","UNIQUE","UNPIVOT","UPDATE",
+        "UPDATETEXT","USE","USER","VALUES","VARYING","VIEW","WAITFOR","WHEN","WHERE",
+        "WHILE","WITH","WRITETEXT",
+    };
+
+    /// <summary>
+    /// Builds the normalize-then-compare function for routine bodies (stored
+    /// procedures and user-defined functions). The pipeline composes (in
+    /// order): optional comment removal, optional bracket stripping for
+    /// unambiguous identifiers, then either literal-aware whitespace
+    /// normalization (when "ignore whitespace" is on) or the standard
+    /// whitespace-aggressive normalize. Both whitespace paths drop blank
+    /// lines as a side effect. String literals are preserved verbatim by
+    /// every stage that touches them.
+    /// </summary>
+    private static Func<string, string> BuildRoutineNormalizer(
+        bool ignoreComments,
+        bool ignoreWhitespace,
+        bool ignoreOptionalBrackets)
+    {
+        Func<string, string> normalizeFinal = ignoreWhitespace
+            ? (Func<string, string>)NormalizeDdlPreservingLiterals
+            : NormalizeDdl;
+
+        return s =>
+        {
+            if (ignoreComments) s = StripSqlComments(s);
+            if (ignoreOptionalBrackets) s = StripOptionalSqlBrackets(s);
+            return normalizeFinal(s);
+        };
+    }
+
+    /// <summary>
+    /// Normalizes DDL by collapsing all whitespace runs OUTSIDE of single-quoted
+    /// string literals to a single space, and lowercasing non-literal text.
+    /// String literals ('...') are copied verbatim — every space, tab, newline,
+    /// and case-sensitive character inside them is preserved, since whitespace
+    /// or case differences inside a literal can change runtime behavior.
+    /// Comments and bracketed identifiers are not given a special state but
+    /// their delimiters are recognized so that a stray quote inside (e.g.
+    /// <c>-- it's broken</c>) is not mistaken for a string literal opener.
+    /// </summary>
+    internal static string NormalizeDdlPreservingLiterals(string ddl)
+    {
+        if (string.IsNullOrEmpty(ddl)) return string.Empty;
+
+        var sb = new System.Text.StringBuilder(ddl.Length);
+        int n = ddl.Length;
+        int i = 0;
+        bool prevWasSpace = false;
+
+        void AppendCodeChar(char c)
+        {
+            if (char.IsWhiteSpace(c))
+            {
+                if (!prevWasSpace && sb.Length > 0)
+                {
+                    sb.Append(' ');
+                    prevWasSpace = true;
+                }
+            }
+            else
+            {
+                sb.Append(char.ToLowerInvariant(c));
+                prevWasSpace = false;
+            }
+        }
+
+        while (i < n)
+        {
+            char c = ddl[i];
+            char next = i + 1 < n ? ddl[i + 1] : '\0';
+
+            // String literal — preserve verbatim (case AND whitespace).
+            if (c == '\'')
+            {
+                sb.Append(c);
+                prevWasSpace = false;
+                i++;
+                while (i < n)
+                {
+                    if (ddl[i] == '\'' && i + 1 < n && ddl[i + 1] == '\'')
+                    {
+                        sb.Append("''");
+                        i += 2;
+                    }
+                    else if (ddl[i] == '\'')
+                    {
+                        sb.Append('\'');
+                        i++;
+                        break;
+                    }
+                    else
+                    {
+                        sb.Append(ddl[i]);
+                        i++;
+                    }
+                }
+                continue;
+            }
+
+            // Line comment — collapse whitespace and lowercase, but don't
+            // interpret quotes inside as string-literal openers.
+            if (c == '-' && next == '-')
+            {
+                AppendCodeChar('-');
+                AppendCodeChar('-');
+                i += 2;
+                while (i < n && ddl[i] != '\n' && ddl[i] != '\r')
+                {
+                    AppendCodeChar(ddl[i]);
+                    i++;
+                }
+                continue;
+            }
+
+            // Block comment — same treatment.
+            if (c == '/' && next == '*')
+            {
+                AppendCodeChar('/');
+                AppendCodeChar('*');
+                i += 2;
+                while (i < n)
+                {
+                    if (ddl[i] == '*' && i + 1 < n && ddl[i + 1] == '/')
+                    {
+                        AppendCodeChar('*');
+                        AppendCodeChar('/');
+                        i += 2;
+                        break;
+                    }
+                    AppendCodeChar(ddl[i]);
+                    i++;
+                }
+                continue;
+            }
+
+            // Bracketed identifier — collapse/lowercase, but don't parse
+            // strings inside (e.g. [Some'Name] is a single identifier).
+            if (c == '[')
+            {
+                AppendCodeChar('[');
+                i++;
+                while (i < n)
+                {
+                    if (ddl[i] == ']' && i + 1 < n && ddl[i + 1] == ']')
+                    {
+                        AppendCodeChar(']');
+                        AppendCodeChar(']');
+                        i += 2;
+                    }
+                    else if (ddl[i] == ']')
+                    {
+                        AppendCodeChar(']');
+                        i++;
+                        break;
+                    }
+                    else
+                    {
+                        AppendCodeChar(ddl[i]);
+                        i++;
+                    }
+                }
+                continue;
+            }
+
+            AppendCodeChar(c);
+            i++;
+        }
+
+        if (sb.Length > 0 && sb[sb.Length - 1] == ' ') sb.Length--;
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Removes T-SQL comments (-- line and /* */ block) from a DDL string.
+    /// Respects single-quoted string literals and bracketed identifiers so
+    /// comment-like sequences inside them are preserved. Newlines outside
+    /// removed comments are preserved; block comments are replaced with a
+    /// single space to keep adjacent tokens from merging.
+    /// </summary>
+    internal static string StripSqlComments(string sql)
+    {
+        if (string.IsNullOrEmpty(sql)) return string.Empty;
+
+        var sb = new System.Text.StringBuilder(sql.Length);
+        int n = sql.Length;
+        int i = 0;
+        while (i < n)
+        {
+            char c = sql[i];
+            char next = i + 1 < n ? sql[i + 1] : '\0';
+
+            // Line comment: skip until newline (newline itself is preserved)
+            if (c == '-' && next == '-')
+            {
+                i += 2;
+                while (i < n && sql[i] != '\n' && sql[i] != '\r') i++;
+                continue;
+            }
+
+            // Block comment: skip through closing */
+            if (c == '/' && next == '*')
+            {
+                i += 2;
+                while (i < n && !(sql[i] == '*' && i + 1 < n && sql[i + 1] == '/'))
+                    i++;
+                if (i < n) i += 2; // skip */
+                sb.Append(' ');
+                continue;
+            }
+
+            // Single-quoted string literal — copy verbatim, handling '' escape
+            if (c == '\'')
+            {
+                sb.Append(c);
+                i++;
+                while (i < n)
+                {
+                    if (sql[i] == '\'' && i + 1 < n && sql[i + 1] == '\'')
+                    {
+                        sb.Append("''");
+                        i += 2;
+                    }
+                    else if (sql[i] == '\'')
+                    {
+                        sb.Append('\'');
+                        i++;
+                        break;
+                    }
+                    else
+                    {
+                        sb.Append(sql[i]);
+                        i++;
+                    }
+                }
+                continue;
+            }
+
+            // Bracketed identifier — copy verbatim, handling ]] escape
+            if (c == '[')
+            {
+                sb.Append(c);
+                i++;
+                while (i < n)
+                {
+                    if (sql[i] == ']' && i + 1 < n && sql[i + 1] == ']')
+                    {
+                        sb.Append("]]");
+                        i += 2;
+                    }
+                    else if (sql[i] == ']')
+                    {
+                        sb.Append(']');
+                        i++;
+                        break;
+                    }
+                    else
+                    {
+                        sb.Append(sql[i]);
+                        i++;
+                    }
+                }
+                continue;
+            }
+
+            sb.Append(c);
+            i++;
+        }
+        return sb.ToString();
     }
 }

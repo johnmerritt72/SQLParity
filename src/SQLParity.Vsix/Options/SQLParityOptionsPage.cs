@@ -61,6 +61,24 @@ namespace SQLParity.Vsix.Options
         [DefaultValue(true)]
         public bool ShowLineNumbers { get; set; } = true;
 
+        [Category("Comparison")]
+        [DisplayName("Ignore Comments in Stored Procedures and Functions")]
+        [Description("When enabled, stored procedures and user-defined functions whose only differences are inside SQL comments (-- ... or /* ... */) are not reported as Modified.")]
+        [DefaultValue(false)]
+        public bool IgnoreCommentsInStoredProcedures { get; set; } = false;
+
+        [Category("Comparison")]
+        [DisplayName("Ignore Whitespace in Stored Procedures and Functions")]
+        [Description("When enabled, stored procedures and user-defined functions whose only differences are whitespace outside of string literals are not reported as Modified. Blank lines are also ignored. Whitespace inside 'string literals' is preserved exactly, since it can change behavior.")]
+        [DefaultValue(false)]
+        public bool IgnoreWhitespaceInStoredProcedures { get; set; } = false;
+
+        [Category("Comparison")]
+        [DisplayName("Ignore Optional Square Brackets")]
+        [Description("When enabled, square brackets around regular identifiers are stripped before comparing any object's DDL (tables, views, procedures, functions, etc.). For example, [dbo].[TestProc] and dbo.TestProc are treated as identical. Brackets are kept whenever they are required: around reserved keywords (e.g. [Order]), names with special characters or spaces, or names starting with a digit.")]
+        [DefaultValue(false)]
+        public bool IgnoreOptionalBrackets { get; set; } = false;
+
         [Category("Performance")]
         [DisplayName("Schema Cache TTL (minutes)")]
         [Description("How long to cache schema reads in memory. Set to 0 to disable caching.")]

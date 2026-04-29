@@ -178,10 +178,19 @@ namespace SQLParity.Vsix.ViewModels
 
                 // Get cache TTL from options (default 5 if options not available)
                 int cacheTtl = 5;
+                bool ignoreCommentsInSps = false;
+                bool ignoreWhitespaceInSps = false;
+                bool ignoreOptionalBrackets = false;
                 try
                 {
                     var opts = OptionsHelper.GetOptions();
-                    if (opts != null) cacheTtl = opts.SchemaCacheTtlMinutes;
+                    if (opts != null)
+                    {
+                        cacheTtl = opts.SchemaCacheTtlMinutes;
+                        ignoreCommentsInSps = opts.IgnoreCommentsInStoredProcedures;
+                        ignoreWhitespaceInSps = opts.IgnoreWhitespaceInStoredProcedures;
+                        ignoreOptionalBrackets = opts.IgnoreOptionalBrackets;
+                    }
                 }
                 catch { }
 
@@ -254,7 +263,7 @@ namespace SQLParity.Vsix.ViewModels
 
                 ProgressText = "Comparing schemas...";
 
-                result = await Task.Run(() => SchemaComparator.Compare(schemaA, schemaB, readOptions));
+                result = await Task.Run(() => SchemaComparator.Compare(schemaA, schemaB, readOptions, ignoreCommentsInSps, ignoreWhitespaceInSps, ignoreOptionalBrackets));
 
                 ProgressText = string.Empty;
 

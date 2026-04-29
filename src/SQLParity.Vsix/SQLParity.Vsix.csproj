@@ -1,10 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project ToolsVersion="15.0" DefaultTargets="Build" InitialTargets="SyncVersionFromVersionTxt" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
     <MinimumVisualStudioVersion>17.0</MinimumVisualStudioVersion>
     <VSToolsPath Condition="'$(VSToolsPath)' == ''">$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)</VSToolsPath>
   </PropertyGroup>
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <!-- version.txt is the single source of truth for the extension version.
+       Read at project-load time so $(SQLParityVersion) is available to every
+       target below (deploy paths, catalog/manifest JSON, generated VersionInfo,
+       and the XmlPoke that syncs source.extension.vsixmanifest). -->
+  <PropertyGroup>
+    <SQLParityVersion>$([System.IO.File]::ReadAllText('$(MSBuildProjectDirectory)\version.txt').Trim())</SQLParityVersion>
+    <SQLParityAssemblyVersion>$(SQLParityVersion).0</SQLParityAssemblyVersion>
+  </PropertyGroup>
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
@@ -178,7 +186,7 @@
   <!-- Deploy to SSMS 22's actual experimental hive (Microsoft/SSMS/, not Microsoft/VisualStudio/) -->
   <Target Name="DeployToSsms22" AfterTargets="DeployVsixExtensionFiles">
     <PropertyGroup>
-      <Ssms22ExtPath>$(LocalAppData)\Microsoft\SSMS\22.0_919b8d66Exp\Extensions\SQLParity\1.0.0\</Ssms22ExtPath>
+      <Ssms22ExtPath>$(LocalAppData)\Microsoft\SSMS\22.0_919b8d66Exp\Extensions\SQLParity\$(SQLParityVersion)\</Ssms22ExtPath>
       <VsixIdentity>SQLParity.214618a2-e13a-49d0-a25a-ac0f2ae6e811</VsixIdentity>
     </PropertyGroup>
     <MakeDir Directories="$(Ssms22ExtPath)" />
@@ -188,19 +196,36 @@
     <!-- Signal SSMS to rescan for new extensions -->
     <Touch Files="$(LocalAppData)\Microsoft\SSMS\22.0_919b8d66Exp\Extensions\extensions.configurationchanged" AlwaysCreate="true" />
     <Copy SourceFiles="$(TargetDir)$(TargetName).pkgdef" DestinationFolder="$(Ssms22ExtPath)" Condition="Exists('$(TargetDir)$(TargetName).pkgdef')" />
-    <WriteLinesToFile File="$(Ssms22ExtPath)catalog.json" Overwrite="true" Lines="{&quot;manifestVersion&quot;:&quot;1.1&quot;,&quot;info&quot;:{&quot;id&quot;:&quot;$(VsixIdentity)%2Cversion=1.0.0&quot;,&quot;manifestType&quot;:&quot;Extension&quot;},&quot;packages&quot;:[{&quot;id&quot;:&quot;Component.$(VsixIdentity)&quot;,&quot;version&quot;:&quot;1.0.0&quot;,&quot;type&quot;:&quot;Component&quot;,&quot;extension&quot;:true,&quot;dependencies&quot;:{&quot;$(VsixIdentity)&quot;:&quot;1.0.0&quot;,&quot;Microsoft.VisualStudio.Component.CoreEditor&quot;:&quot;[17.0%2C19.0)&quot;},&quot;localizedResources&quot;:[{&quot;language&quot;:&quot;en-US&quot;,&quot;title&quot;:&quot;SQLParity&quot;,&quot;description&quot;:&quot;Schema comparison and sync for SQL Server.&quot;}]},{&quot;id&quot;:&quot;$(VsixIdentity)&quot;,&quot;version&quot;:&quot;1.0.0&quot;,&quot;type&quot;:&quot;Vsix&quot;,&quot;vsixId&quot;:&quot;$(VsixIdentity)&quot;,&quot;extensionDir&quot;:&quot;[installdir]&quot;,&quot;installSizes&quot;:{&quot;targetDrive&quot;:0}}]}" />
-    <WriteLinesToFile File="$(Ssms22ExtPath)manifest.json" Overwrite="true" Lines="{&quot;id&quot;:&quot;$(VsixIdentity)&quot;,&quot;version&quot;:&quot;1.0.0&quot;,&quot;type&quot;:&quot;Vsix&quot;,&quot;vsixId&quot;:&quot;$(VsixIdentity)&quot;,&quot;extensionDir&quot;:&quot;[installdir]&quot;,&quot;files&quot;:[{&quot;fileName&quot;:&quot;/extension.vsixmanifest&quot;,&quot;sha256&quot;:null},{&quot;fileName&quot;:&quot;/SQLParity.Vsix.dll&quot;,&quot;sha256&quot;:null},{&quot;fileName&quot;:&quot;/SQLParity.Core.dll&quot;,&quot;sha256&quot;:null},{&quot;fileName&quot;:&quot;/SQLParity.Vsix.pkgdef&quot;,&quot;sha256&quot;:null}],&quot;installSizes&quot;:{&quot;targetDrive&quot;:0},&quot;dependencies&quot;:{&quot;Microsoft.VisualStudio.Component.CoreEditor&quot;:&quot;[17.0%2C19.0)&quot;}}" />
+    <WriteLinesToFile File="$(Ssms22ExtPath)catalog.json" Overwrite="true" Lines="{&quot;manifestVersion&quot;:&quot;1.1&quot;,&quot;info&quot;:{&quot;id&quot;:&quot;$(VsixIdentity)%2Cversion=$(SQLParityVersion)&quot;,&quot;manifestType&quot;:&quot;Extension&quot;},&quot;packages&quot;:[{&quot;id&quot;:&quot;Component.$(VsixIdentity)&quot;,&quot;version&quot;:&quot;$(SQLParityVersion)&quot;,&quot;type&quot;:&quot;Component&quot;,&quot;extension&quot;:true,&quot;dependencies&quot;:{&quot;$(VsixIdentity)&quot;:&quot;$(SQLParityVersion)&quot;,&quot;Microsoft.VisualStudio.Component.CoreEditor&quot;:&quot;[17.0%2C19.0)&quot;},&quot;localizedResources&quot;:[{&quot;language&quot;:&quot;en-US&quot;,&quot;title&quot;:&quot;SQLParity&quot;,&quot;description&quot;:&quot;Schema comparison and sync for SQL Server.&quot;}]},{&quot;id&quot;:&quot;$(VsixIdentity)&quot;,&quot;version&quot;:&quot;$(SQLParityVersion)&quot;,&quot;type&quot;:&quot;Vsix&quot;,&quot;vsixId&quot;:&quot;$(VsixIdentity)&quot;,&quot;extensionDir&quot;:&quot;[installdir]&quot;,&quot;installSizes&quot;:{&quot;targetDrive&quot;:0}}]}" />
+    <WriteLinesToFile File="$(Ssms22ExtPath)manifest.json" Overwrite="true" Lines="{&quot;id&quot;:&quot;$(VsixIdentity)&quot;,&quot;version&quot;:&quot;$(SQLParityVersion)&quot;,&quot;type&quot;:&quot;Vsix&quot;,&quot;vsixId&quot;:&quot;$(VsixIdentity)&quot;,&quot;extensionDir&quot;:&quot;[installdir]&quot;,&quot;files&quot;:[{&quot;fileName&quot;:&quot;/extension.vsixmanifest&quot;,&quot;sha256&quot;:null},{&quot;fileName&quot;:&quot;/SQLParity.Vsix.dll&quot;,&quot;sha256&quot;:null},{&quot;fileName&quot;:&quot;/SQLParity.Core.dll&quot;,&quot;sha256&quot;:null},{&quot;fileName&quot;:&quot;/SQLParity.Vsix.pkgdef&quot;,&quot;sha256&quot;:null}],&quot;installSizes&quot;:{&quot;targetDrive&quot;:0},&quot;dependencies&quot;:{&quot;Microsoft.VisualStudio.Component.CoreEditor&quot;:&quot;[17.0%2C19.0)&quot;}}" />
     <Message Text="Deployed SQLParity to SSMS 22 experimental hive: $(Ssms22ExtPath)" Importance="high" />
   </Target>
-  <!-- Generate VersionInfo.g.cs from version.txt (single source of truth) -->
+  <!-- Generate VersionInfo.g.cs from $(SQLParityVersion). Emits both the
+       VersionInfo.Version constant (shown on the Options page) and the
+       [assembly: AssemblyVersion]/[AssemblyFileVersion] attributes, so they
+       all derive from version.txt. -->
   <Target Name="GenerateVersionInfo" BeforeTargets="CoreCompile">
-    <ReadLinesFromFile File="$(ProjectDir)version.txt">
-      <Output TaskParameter="Lines" PropertyName="SQLParityVersion" />
-    </ReadLinesFromFile>
-    <WriteLinesToFile File="$(IntermediateOutputPath)VersionInfo.g.cs" Overwrite="true"
-      Lines="namespace SQLParity.Vsix { internal static class VersionInfo { public const string Version = &quot;$(SQLParityVersion)&quot;%3B } }" />
+    <ItemGroup>
+      <_VersionInfoLines Include="using System.Reflection%3B" />
+      <_VersionInfoLines Include="[assembly: AssemblyVersion(&quot;$(SQLParityAssemblyVersion)&quot;)]" />
+      <_VersionInfoLines Include="[assembly: AssemblyFileVersion(&quot;$(SQLParityAssemblyVersion)&quot;)]" />
+      <_VersionInfoLines Include="namespace SQLParity.Vsix { internal static class VersionInfo { public const string Version = &quot;$(SQLParityVersion)&quot;%3B } }" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(IntermediateOutputPath)VersionInfo.g.cs" Overwrite="true" Lines="@(_VersionInfoLines)" />
     <ItemGroup>
       <Compile Include="$(IntermediateOutputPath)VersionInfo.g.cs" />
     </ItemGroup>
+  </Target>
+  <!-- Keep source.extension.vsixmanifest's Identity@Version in sync with
+       version.txt. Runs as InitialTargets so it fires before VSSDK reads the
+       manifest to produce the intermediate manifest, the .vsix package, and
+       the pkgdef. The XmlPoke is idempotent — when version.txt matches the
+       manifest, the file content is unchanged (mtime may bump). -->
+  <Target Name="SyncVersionFromVersionTxt">
+    <XmlPoke
+      XmlInputPath="$(MSBuildProjectDirectory)\source.extension.vsixmanifest"
+      Query="/x:PackageManifest/x:Metadata/x:Identity/@Version"
+      Value="$(SQLParityVersion)"
+      Namespaces="&lt;Namespace Prefix='x' Uri='http://schemas.microsoft.com/developer/vsx-schema/2011' /&gt;" />
   </Target>
 </Project>

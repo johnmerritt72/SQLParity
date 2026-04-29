@@ -196,9 +196,20 @@ namespace SQLParity.Vsix.Helpers
         {
             if (string.IsNullOrWhiteSpace(normA) || string.IsNullOrWhiteSpace(normB))
                 return false;
-            int common = CommonPrefixLength(normA, normB);
-            int threshold = Math.Max(Math.Min(normA.Length, normB.Length) * 4 / 10, 3);
-            return common >= threshold;
+
+            // Fast path: short common prefix → cheap accept for typical edits
+            // at the end of a line. (e.g. trailing comma added).
+            int prefix = CommonPrefixLength(normA, normB);
+            int minLen = Math.Min(normA.Length, normB.Length);
+            if (prefix >= Math.Max(minLen * 6 / 10, 4))
+                return true;
+
+            // General case: use character-level LCS ratio. This handles edits
+            // in the middle of the line (e.g. inserting [brackets] around a
+            // schema-qualified name) which a prefix check cannot detect.
+            int lcs = ComputeCharLcsLength(normA, normB);
+            int maxLen = Math.Max(normA.Length, normB.Length);
+            return maxLen > 0 && lcs * 2 >= maxLen; // ratio >= 50%
         }
 
         private static int CommonPrefixLength(string a, string b)
@@ -208,6 +219,45 @@ namespace SQLParity.Vsix.Helpers
             while (i < len && char.ToUpperInvariant(a[i]) == char.ToUpperInvariant(b[i]))
                 i++;
             return i;
+        }
+
+        /// <summary>
+        /// Returns the character-level LCS length between a and b (case-insensitive).
+        /// Uses rolling rows to keep memory at O(min(n,m)). For pathological line
+        /// pairs, falls back to a cheap common-prefix approximation.
+        /// </summary>
+        private static int ComputeCharLcsLength(string a, string b)
+        {
+            int n = a.Length;
+            int m = b.Length;
+            if (n == 0 || m == 0) return 0;
+
+            if ((long)n * m > 4_000_000)
+                return CommonPrefixLength(a, b);
+
+            // Iterate over the longer string in the outer loop and keep the
+            // inner DP row sized to the shorter string for smaller allocations.
+            string outer = n >= m ? a : b;
+            string inner = n >= m ? b : a;
+            int outerLen = outer.Length;
+            int innerLen = inner.Length;
+
+            var prev = new int[innerLen + 1];
+            var curr = new int[innerLen + 1];
+            for (int i = 1; i <= outerLen; i++)
+            {
+                char co = char.ToUpperInvariant(outer[i - 1]);
+                for (int j = 1; j <= innerLen; j++)
+                {
+                    if (co == char.ToUpperInvariant(inner[j - 1]))
+                        curr[j] = prev[j - 1] + 1;
+                    else
+                        curr[j] = curr[j - 1] >= prev[j] ? curr[j - 1] : prev[j];
+                }
+                var tmp = prev; prev = curr; curr = tmp;
+                Array.Clear(curr, 0, curr.Length);
+            }
+            return prev[innerLen];
         }
 
         #endregion
@@ -386,22 +436,14 @@ namespace SQLParity.Vsix.Helpers
 
         private static void AddInlineDiffRuns(Paragraph para, string thisLine, string otherLine, SolidColorBrush inlineBrush)
         {
-            int i = 0;
-            int runStart = 0;
-            bool runIsDiff = false;
+            var diffMask = ComputeCharDiffMask(thisLine, otherLine);
 
-            while (i <= thisLine.Length)
+            int runStart = 0;
+            bool runIsDiff = thisLine.Length > 0 && diffMask[0];
+
+            for (int i = 0; i <= thisLine.Length; i++)
             {
-                bool isDiff;
-                if (i < thisLine.Length)
-                {
-                    isDiff = i >= otherLine.Length
-                        || char.ToUpperInvariant(thisLine[i]) != char.ToUpperInvariant(otherLine[i]);
-                }
-                else
-                {
-                    isDiff = true;
-                }
+                bool isDiff = i < thisLine.Length && diffMask[i];
 
                 if (i == thisLine.Length || isDiff != runIsDiff)
                 {
@@ -419,9 +461,65 @@ namespace SQLParity.Vsix.Helpers
                     runStart = i;
                     runIsDiff = isDiff;
                 }
-
-                i++;
             }
+        }
+
+        /// <summary>
+        /// Returns a mask of length thisLine.Length where mask[i] is true if thisLine[i]
+        /// is NOT part of the longest common subsequence with otherLine. Uses standard
+        /// LCS DP (case-insensitive) so that insertions/deletions on either side don't
+        /// throw off positional alignment — e.g. only the inserted brackets get
+        /// highlighted, not every character that follows them.
+        /// </summary>
+        private static bool[] ComputeCharDiffMask(string thisLine, string otherLine)
+        {
+            int n = thisLine.Length;
+            int m = otherLine.Length;
+            var mask = new bool[n];
+            if (n == 0) return mask;
+            for (int i = 0; i < n; i++) mask[i] = true;
+            if (m == 0) return mask;
+
+            // Bound memory for pathological lines; fall back to positional compare.
+            if ((long)n * m > 4_000_000)
+            {
+                int common = Math.Min(n, m);
+                for (int i = 0; i < n; i++)
+                {
+                    mask[i] = i >= m
+                        || char.ToUpperInvariant(thisLine[i]) != char.ToUpperInvariant(otherLine[i]);
+                }
+                return mask;
+            }
+
+            var dp = new int[n + 1, m + 1];
+            for (int i = 1; i <= n; i++)
+            {
+                char ca = char.ToUpperInvariant(thisLine[i - 1]);
+                for (int j = 1; j <= m; j++)
+                {
+                    if (ca == char.ToUpperInvariant(otherLine[j - 1]))
+                        dp[i, j] = dp[i - 1, j - 1] + 1;
+                    else
+                        dp[i, j] = Math.Max(dp[i - 1, j], dp[i, j - 1]);
+                }
+            }
+
+            int x = n, y = m;
+            while (x > 0 && y > 0)
+            {
+                if (char.ToUpperInvariant(thisLine[x - 1]) == char.ToUpperInvariant(otherLine[y - 1]))
+                {
+                    mask[x - 1] = false;
+                    x--; y--;
+                }
+                else if (dp[x - 1, y] > dp[x, y - 1])
+                    x--;
+                else
+                    y--;
+            }
+
+            return mask;
         }
 
         #endregion

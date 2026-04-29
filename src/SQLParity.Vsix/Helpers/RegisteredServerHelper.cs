@@ -13,7 +13,11 @@ namespace SQLParity.Vsix.Helpers
         {
             var names = new List<string>();
 
-            // Approach 1: Try the static LocalFileStore (works when SSMS has loaded the store)
+            // Read SSMS's already-loaded singleton store. Do NOT construct a new
+            // RegisteredServersStore — that triggers ServerGroup.Create() inside
+            // SFC, which fires a Debug.Assert in get_DomainInstanceName() and pops
+            // a modal "Abort=Quit" dialog (Abort terminates SSMS). A fresh store
+            // is also empty, so it would never return real registered servers.
             try
             {
                 var store = Microsoft.SqlServer.Management.RegisteredServers.RegisteredServersStore.LocalFileStore;
@@ -23,18 +27,6 @@ namespace SQLParity.Vsix.Helpers
                     if (dbEngineGroup != null)
                         CollectServerNames(dbEngineGroup, names);
                 }
-            }
-            catch { }
-
-            if (names.Count > 0) return names;
-
-            // Approach 2: Try the default constructor (creates a new in-memory store)
-            try
-            {
-                var store = new Microsoft.SqlServer.Management.RegisteredServers.RegisteredServersStore();
-                var dbEngineGroup = store.DatabaseEngineServerGroup;
-                if (dbEngineGroup != null)
-                    CollectServerNames(dbEngineGroup, names);
             }
             catch { }
 

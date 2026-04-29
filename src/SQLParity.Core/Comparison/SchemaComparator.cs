@@ -20,7 +20,8 @@ public static class SchemaComparator
         SchemaReadOptions options,
         bool ignoreCommentsInStoredProcedures = false,
         bool ignoreWhitespaceInStoredProcedures = false,
-        bool ignoreOptionalBrackets = false)
+        bool ignoreOptionalBrackets = false,
+        bool limitToFolderObjects = false)
     {
         options = options ?? SchemaReadOptions.All;
         var changes = new List<Change>();
@@ -106,6 +107,15 @@ public static class SchemaComparator
         // Schemas (match by Name, case-insensitive)
         if (options.IncludeSchemas)
             changes.AddRange(CompareSchemas(sideA.Schemas, sideB.Schemas, generalNormalizer));
+
+        // Folder-mode filter: when Side B is a folder of .sql files and the
+        // user wants to focus only on objects represented in source control,
+        // drop changes whose object is missing from B (Status == New, i.e.
+        // exists on A only). Modified and Dropped (B-only) changes survive
+        // — Modified is the actual drift, Dropped means the file has an
+        // object the live DB doesn't, which the user still wants to see.
+        if (limitToFolderObjects)
+            changes.RemoveAll(c => c.Status == ChangeStatus.New);
 
         // Classify column-level risk first so RiskClassifier can aggregate them.
         foreach (var change in changes)

@@ -752,6 +752,71 @@ public class SchemaComparatorTests
     }
 
     [Fact]
+    public void LimitToFolderObjects_DropsAOnlyChanges()
+    {
+        // Side A has a proc that doesn't exist in Side B (the "folder").
+        // With the limit on, that A-only proc must not appear in changes.
+        var procOnlyA = MakeProc("dbo", "OnlyInDb", "CREATE PROC OnlyInDb AS SELECT 1");
+        var a = WithProcs(EmptySchema("DbA"), procOnlyA);
+        var b = EmptySchema("Folder");
+
+        var result = SchemaComparator.Compare(
+            a, b, SchemaReadOptions.All,
+            limitToFolderObjects: true);
+
+        Assert.Empty(result.Changes);
+    }
+
+    [Fact]
+    public void LimitToFolderObjects_KeepsModifiedChanges()
+    {
+        var procA = MakeProc("dbo", "Foo", "CREATE PROC Foo AS SELECT 1");
+        var procB = MakeProc("dbo", "Foo", "CREATE PROC Foo AS SELECT 2");
+        var a = WithProcs(EmptySchema("DbA"), procA);
+        var b = WithProcs(EmptySchema("Folder"), procB);
+
+        var result = SchemaComparator.Compare(
+            a, b, SchemaReadOptions.All,
+            limitToFolderObjects: true);
+
+        var change = Assert.Single(result.Changes);
+        Assert.Equal(ChangeStatus.Modified, change.Status);
+    }
+
+    [Fact]
+    public void LimitToFolderObjects_KeepsBOnlyChanges()
+    {
+        // The folder has an object that no longer exists in the live DB.
+        // The user still wants to see that — they may want to delete the file
+        // or restore the DB object.
+        var procOnlyB = MakeProc("dbo", "OnlyInFile", "CREATE PROC OnlyInFile AS SELECT 1");
+        var a = EmptySchema("DbA");
+        var b = WithProcs(EmptySchema("Folder"), procOnlyB);
+
+        var result = SchemaComparator.Compare(
+            a, b, SchemaReadOptions.All,
+            limitToFolderObjects: true);
+
+        var change = Assert.Single(result.Changes);
+        Assert.Equal(ChangeStatus.Dropped, change.Status);
+    }
+
+    [Fact]
+    public void LimitToFolderObjects_OffPreservesAllChanges()
+    {
+        var procOnlyA = MakeProc("dbo", "OnlyInDb", "CREATE PROC OnlyInDb AS SELECT 1");
+        var a = WithProcs(EmptySchema("DbA"), procOnlyA);
+        var b = EmptySchema("Folder");
+
+        var result = SchemaComparator.Compare(
+            a, b, SchemaReadOptions.All,
+            limitToFolderObjects: false);
+
+        var change = Assert.Single(result.Changes);
+        Assert.Equal(ChangeStatus.New, change.Status);
+    }
+
+    [Fact]
     public void BracketStripping_DoesNotTouchBracketsInsideStringLiteral()
     {
         // The literal '[dbo].[X]' is data, not an identifier — must stay intact.

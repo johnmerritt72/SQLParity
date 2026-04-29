@@ -181,6 +181,7 @@ namespace SQLParity.Vsix.ViewModels
                 bool ignoreCommentsInSps = false;
                 bool ignoreWhitespaceInSps = false;
                 bool ignoreOptionalBrackets = false;
+                bool limitToFolderObjects = true;
                 try
                 {
                     var opts = OptionsHelper.GetOptions();
@@ -190,6 +191,7 @@ namespace SQLParity.Vsix.ViewModels
                         ignoreCommentsInSps = opts.IgnoreCommentsInStoredProcedures;
                         ignoreWhitespaceInSps = opts.IgnoreWhitespaceInStoredProcedures;
                         ignoreOptionalBrackets = opts.IgnoreOptionalBrackets;
+                        limitToFolderObjects = opts.LimitComparisonToFolderObjects;
                     }
                 }
                 catch { }
@@ -263,7 +265,20 @@ namespace SQLParity.Vsix.ViewModels
 
                 ProgressText = "Comparing schemas...";
 
-                result = await Task.Run(() => SchemaComparator.Compare(schemaA, schemaB, readOptions, ignoreCommentsInSps, ignoreWhitespaceInSps, ignoreOptionalBrackets));
+                // Folder-mode-only filter: when Side B is folder-sourced (set
+                // in step 6), the user-configurable LimitComparisonToFolderObjects
+                // hides A-only changes. For DB↔DB compares the flag is forced
+                // off so today's behavior is preserved. An empty Side B (no
+                // objects parsed) also forces the flag off so the user sees all
+                // of A's objects — the explicit "scaffold from DB" workflow.
+                bool sideBIsFolder = sideB.IsFolderMode;
+                bool sideBIsEmpty = IsSchemaEmpty(schemaB);
+                bool effectiveLimit = sideBIsFolder && !sideBIsEmpty && limitToFolderObjects;
+
+                result = await Task.Run(() => SchemaComparator.Compare(
+                    schemaA, schemaB, readOptions,
+                    ignoreCommentsInSps, ignoreWhitespaceInSps, ignoreOptionalBrackets,
+                    effectiveLimit));
 
                 ProgressText = string.Empty;
 
@@ -737,6 +752,26 @@ namespace SQLParity.Vsix.ViewModels
             CurrentState = WorkflowState.ConnectionSetup;
             ProgressText = string.Empty;
             StatusMessage = "Configure both connections to begin.";
+        }
+
+        /// <summary>
+        /// Returns true when a schema has zero objects of every type. Used to
+        /// suppress the folder-only filter when Side B is empty (the user wants
+        /// to scaffold a fresh project from the live DB, so they need to see
+        /// all of A's objects as "New").
+        /// </summary>
+        private static bool IsSchemaEmpty(DatabaseSchema s)
+        {
+            if (s == null) return true;
+            return s.Tables.Count == 0
+                && s.Views.Count == 0
+                && s.StoredProcedures.Count == 0
+                && s.Functions.Count == 0
+                && s.Sequences.Count == 0
+                && s.Synonyms.Count == 0
+                && s.UserDefinedDataTypes.Count == 0
+                && s.UserDefinedTableTypes.Count == 0
+                && s.Schemas.Count == 0;
         }
     }
 }

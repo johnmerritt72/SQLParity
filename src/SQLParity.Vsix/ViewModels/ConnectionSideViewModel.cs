@@ -43,6 +43,26 @@ namespace SQLParity.Vsix.ViewModels
         private bool _isConnecting;
         private string _connectionError = string.Empty;
         private bool _forceRefresh;
+        private bool _isFolderMode;
+        private string _folderPath = string.Empty;
+
+        /// <summary>
+        /// True when this side reads from a folder of .sql files instead of a
+        /// live database. Always false on Side A (database-only). Toggled by
+        /// the Side B mode selector — see step 6 of the folder-mode rollout.
+        /// </summary>
+        public bool IsFolderMode
+        {
+            get => _isFolderMode;
+            set => SetProperty(ref _isFolderMode, value);
+        }
+
+        /// <summary>The on-disk folder path when <see cref="IsFolderMode"/> is true.</summary>
+        public string FolderPath
+        {
+            get => _folderPath;
+            set => SetProperty(ref _folderPath, value ?? string.Empty);
+        }
 
         public ConnectionSideViewModel()
         {

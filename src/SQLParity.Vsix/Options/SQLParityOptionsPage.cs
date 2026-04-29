@@ -79,6 +79,12 @@ namespace SQLParity.Vsix.Options
         [DefaultValue(false)]
         public bool IgnoreOptionalBrackets { get; set; } = false;
 
+        [Category("Comparison")]
+        [DisplayName("Limit Comparison to Solution Folder Objects")]
+        [Description("Only takes effect when Side B is set to Folder mode. When enabled, objects that exist in the live database but are not represented by a .sql file in the solution folder are hidden from the change list. An empty folder always shows everything from Side A regardless of this setting.")]
+        [DefaultValue(true)]
+        public bool LimitComparisonToFolderObjects { get; set; } = true;
+
         [Category("Performance")]
         [DisplayName("Schema Cache TTL (minutes)")]
         [Description("How long to cache schema reads in memory. Set to 0 to disable caching.")]

@@ -23,6 +23,39 @@ namespace SQLParity.Core.Parsing;
 /// </remarks>
 public static class IdempotentDdlWrapper
 {
+    /// <summary>
+    /// Returns a guarded DROP statement for an object that has been removed
+    /// from the source database. Uses the T-SQL 2016+ <c>DROP &lt;type&gt; IF
+    /// EXISTS</c> shorthand so the script no-ops when the object is already
+    /// gone. Used by <c>FolderSyncWriter</c> when a Dropped change needs the
+    /// .sql file to encode "this object should not exist".
+    /// </summary>
+    public static string WrapDrop(ObjectType objectType, string schema, string name)
+    {
+        schema ??= "dbo";
+        name ??= string.Empty;
+        string fq = objectType == ObjectType.Schema
+            ? $"[{name}]"
+            : $"[{schema}].[{name}]";
+
+        string keyword = objectType switch
+        {
+            ObjectType.StoredProcedure => "PROCEDURE",
+            ObjectType.UserDefinedFunction => "FUNCTION",
+            ObjectType.View => "VIEW",
+            ObjectType.Table => "TABLE",
+            ObjectType.Trigger => "TRIGGER",
+            ObjectType.UserDefinedDataType or ObjectType.UserDefinedTableType => "TYPE",
+            ObjectType.Sequence => "SEQUENCE",
+            ObjectType.Synonym => "SYNONYM",
+            ObjectType.Schema => "SCHEMA",
+            _ => string.Empty,
+        };
+        if (string.IsNullOrEmpty(keyword)) return string.Empty;
+
+        return $"DROP {keyword} IF EXISTS {fq};";
+    }
+
     public static string Wrap(ObjectType objectType, string schema, string name, string bareDdl)
     {
         if (string.IsNullOrEmpty(bareDdl)) bareDdl = string.Empty;

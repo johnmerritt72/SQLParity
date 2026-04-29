@@ -69,6 +69,7 @@
     <Compile Include="Helpers\SimpleDiffHighlighter.cs" />
     <Compile Include="Helpers\ConnectionHistoryStore.cs" />
     <Compile Include="Helpers\RegisteredServerHelper.cs" />
+    <Compile Include="Helpers\SsmsSolutionService.cs" />
     <Compile Include="SQLParityPackage.cs" />
     <Compile Include="ComparisonToolWindow.cs" />
     <Compile Include="NewComparisonCommand.cs" />

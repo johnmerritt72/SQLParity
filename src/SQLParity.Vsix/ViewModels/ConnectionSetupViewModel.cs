@@ -1,6 +1,7 @@
 using System;
 using System.ComponentModel;
 using System.Data.SqlClient;
+using System.IO;
 using System.Threading.Tasks;
 using System.Windows.Input;
 using SQLParity.Vsix.Helpers;
@@ -21,6 +22,42 @@ namespace SQLParity.Vsix.ViewModels
 
             SideA.PropertyChanged += OnSidePropertyChanged;
             SideB.PropertyChanged += OnSidePropertyChanged;
+
+            // When the user toggles Side B to folder mode, auto-populate the
+            // folder path from SSMS's open solution. If no solution is open,
+            // bounce the toggle back to database mode (the UI will show the
+            // disabled state via IsSolutionOpen, but a programmatic flip via
+            // bound radio still needs to be repaired here).
+            SideB.PropertyChanged += (s, e) =>
+            {
+                if (e.PropertyName == nameof(ConnectionSideViewModel.IsFolderMode) && SideB.IsFolderMode)
+                {
+                    string dir = null;
+                    try { dir = SsmsSolutionService.GetSolutionDirectory(); } catch { /* swallow */ }
+
+                    if (string.IsNullOrEmpty(dir))
+                    {
+                        SideB.IsFolderMode = false;
+                        DuplicateLabelWarning = "Open a SSMS Solution before switching Side B to Folder mode.";
+                        OnPropertyChanged(nameof(HasValidationError));
+                        return;
+                    }
+
+                    SideB.FolderPath = dir;
+                    if (string.IsNullOrWhiteSpace(SideB.Label))
+                        SideB.Label = "Solution Folder";
+                }
+            };
+        }
+
+        /// <summary>True when the host SSMS instance has a solution loaded.</summary>
+        public bool IsSolutionOpen
+        {
+            get
+            {
+                try { return SsmsSolutionService.IsSolutionOpen(); }
+                catch { return false; }
+            }
         }
 
         public ConnectionSideViewModel SideA { get; }
@@ -79,9 +116,15 @@ namespace SQLParity.Vsix.ViewModels
             HasDuplicateLabels = bothLabelsSet
                 && string.Equals(SideA.Label.Trim(), SideB.Label.Trim(), StringComparison.OrdinalIgnoreCase);
 
-            // Check same server + database
-            bool bothServersSet = !string.IsNullOrWhiteSpace(SideA.ServerName) && !string.IsNullOrWhiteSpace(SideB.ServerName);
-            bool bothDbsSet = !string.IsNullOrWhiteSpace(SideA.DatabaseName) && !string.IsNullOrWhiteSpace(SideB.DatabaseName);
+            // Check same server + database. Folder mode never collides with a
+            // live DB so the check is skipped when either side is folder-sourced.
+            bool bothAreDb = !SideA.IsFolderMode && !SideB.IsFolderMode;
+            bool bothServersSet = bothAreDb
+                && !string.IsNullOrWhiteSpace(SideA.ServerName)
+                && !string.IsNullOrWhiteSpace(SideB.ServerName);
+            bool bothDbsSet = bothAreDb
+                && !string.IsNullOrWhiteSpace(SideA.DatabaseName)
+                && !string.IsNullOrWhiteSpace(SideB.DatabaseName);
             HasSameDatabase = bothServersSet && bothDbsSet
                 && string.Equals(SideA.ServerName.Trim(), SideB.ServerName.Trim(), StringComparison.OrdinalIgnoreCase)
                 && string.Equals(SideA.DatabaseName.Trim(), SideB.DatabaseName.Trim(), StringComparison.OrdinalIgnoreCase);
@@ -111,8 +154,14 @@ namespace SQLParity.Vsix.ViewModels
             DuplicateLabelWarning = string.Empty;
             try
             {
-                var errorA = await ValidateDatabaseExists(SideA, "Side A");
-                var errorB = await ValidateDatabaseExists(SideB, "Side B");
+                // Validate each side per its mode: live DB → can it connect?
+                // Folder side → does the folder still exist?
+                string errorA = SideA.IsFolderMode
+                    ? ValidateFolderExists(SideA, "Side A")
+                    : await ValidateDatabaseExists(SideA, "Side A");
+                string errorB = SideB.IsFolderMode
+                    ? ValidateFolderExists(SideB, "Side B")
+                    : await ValidateDatabaseExists(SideB, "Side B");
 
                 if (errorA != null || errorB != null)
                 {
@@ -122,10 +171,9 @@ namespace SQLParity.Vsix.ViewModels
                     return;
                 }
 
-                // Persist the final connection state (the DatabaseName may have
-                // been changed via the dropdown without a Connect click).
-                SideA.SaveToHistory();
-                SideB.SaveToHistory();
+                // Persist the final connection state for DB sides only.
+                if (!SideA.IsFolderMode) SideA.SaveToHistory();
+                if (!SideB.IsFolderMode) SideB.SaveToHistory();
 
                 ContinueRequested?.Invoke(this, EventArgs.Empty);
             }
@@ -133,6 +181,15 @@ namespace SQLParity.Vsix.ViewModels
             {
                 IsValidating = false;
             }
+        }
+
+        private static string ValidateFolderExists(ConnectionSideViewModel side, string label)
+        {
+            if (string.IsNullOrWhiteSpace(side.FolderPath))
+                return $"{label}: No folder selected.";
+            if (!Directory.Exists(side.FolderPath))
+                return $"{label}: Folder '{side.FolderPath}' does not exist.";
+            return null;
         }
 
         private static async Task<string> ValidateDatabaseExists(ConnectionSideViewModel side, string label)

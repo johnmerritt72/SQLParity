@@ -54,14 +54,36 @@ namespace SQLParity.Vsix.ViewModels
         public bool IsFolderMode
         {
             get => _isFolderMode;
-            set => SetProperty(ref _isFolderMode, value);
+            set
+            {
+                if (SetProperty(ref _isFolderMode, value))
+                {
+                    OnPropertyChanged(nameof(IsDatabaseMode));
+                    OnPropertyChanged(nameof(IsComplete));
+                }
+            }
+        }
+
+        /// <summary>True when this side connects to a live database (the default).</summary>
+        public bool IsDatabaseMode
+        {
+            get => !_isFolderMode;
+            set
+            {
+                if (value != !_isFolderMode)
+                    IsFolderMode = !value;
+            }
         }
 
         /// <summary>The on-disk folder path when <see cref="IsFolderMode"/> is true.</summary>
         public string FolderPath
         {
             get => _folderPath;
-            set => SetProperty(ref _folderPath, value ?? string.Empty);
+            set
+            {
+                if (SetProperty(ref _folderPath, value ?? string.Empty))
+                    OnPropertyChanged(nameof(IsComplete));
+            }
         }
 
         public ConnectionSideViewModel()
@@ -235,10 +257,11 @@ namespace SQLParity.Vsix.ViewModels
             }
         }
 
-        public bool IsComplete =>
-            !string.IsNullOrWhiteSpace(ServerName)
-            && !string.IsNullOrWhiteSpace(DatabaseName)
-            && !string.IsNullOrWhiteSpace(Label);
+        public bool IsComplete => IsFolderMode
+            ? !string.IsNullOrWhiteSpace(FolderPath) && !string.IsNullOrWhiteSpace(Label)
+            : !string.IsNullOrWhiteSpace(ServerName)
+                && !string.IsNullOrWhiteSpace(DatabaseName)
+                && !string.IsNullOrWhiteSpace(Label);
 
         /// <summary>
         /// Explicitly save the current connection to history. Called on Continue

@@ -9,6 +9,7 @@ using Microsoft.Win32;
 using SQLParity.Core;
 using SQLParity.Core.Comparison;
 using SQLParity.Core.Model;
+using SQLParity.Core.Parsing;
 using SQLParity.Core.Sync;
 using SQLParity.Vsix.Helpers;
 using SQLParity.Vsix.Options;
@@ -44,6 +45,13 @@ namespace SQLParity.Vsix.ViewModels
         private string _statusMessage = "Configure both connections to begin.";
         private string _progressText = string.Empty;
         private System.Threading.CancellationTokenSource _comparisonCts;
+
+        /// <summary>
+        /// When Side B is folder-sourced, the parsed-objects-to-source-file map
+        /// produced by <see cref="FolderSchemaReader"/>. Stashed for the A→B
+        /// sync writer (step 7) to know which file backs each object.
+        /// </summary>
+        private FolderSchemaContext _sideBFolderContext;
 
         public ComparisonHostViewModel()
         {
@@ -230,35 +238,51 @@ namespace SQLParity.Vsix.ViewModels
 
                 ct.ThrowIfCancellationRequested();
 
-                // --- Read Side B (database 2 of 2) ---
-                var cachedB = SchemaCache.Get(sideB.ServerName, sideB.DatabaseName, cacheTtl);
-                if (cachedB != null && !sideB.ForceRefresh)
+                // --- Read Side B (database 2 of 2, OR a folder of .sql files) ---
+                if (sideB.IsFolderMode)
                 {
-                    schemaB = cachedB;
-                    var ageB = SchemaCache.GetAge(sideB.ServerName, sideB.DatabaseName);
-                    ProgressText = $"Using cached schema for [{sideB.Label}] (read {ageB?.TotalMinutes:F0} minutes ago)";
-                }
-                else
-                {
-                    string phaseB = $"Database 2 of 2: [{sideB.Label}] ({sideB.ServerName}/{sideB.DatabaseName})";
-                    var progressB = new Progress<SchemaReadProgress>(p =>
-                    {
-                        ProgressText = $"{phaseB}  —  {p.CurrentOperation}";
-                        ProgressValue = p.CompletedItems;
-                        ProgressMaximum = p.TotalItems;
-                    });
-
-                    ProgressText = phaseB;
+                    ProgressText = $"Reading solution folder [{sideB.Label}] at {sideB.FolderPath}";
                     ProgressValue = 0;
                     ProgressMaximum = 0;
 
-                    schemaB = await Task.Run(() =>
+                    var folderResult = await Task.Run(() =>
+                        new FolderSchemaReader().ReadFolder(
+                            sideB.FolderPath, "Folder", sideB.Label, recursive: false));
+                    schemaB = folderResult.Schema;
+                    _sideBFolderContext = folderResult.Context;
+                }
+                else
+                {
+                    _sideBFolderContext = null;
+                    var cachedB = SchemaCache.Get(sideB.ServerName, sideB.DatabaseName, cacheTtl);
+                    if (cachedB != null && !sideB.ForceRefresh)
                     {
-                        var reader = new SchemaReader(connStrB, sideB.DatabaseName);
-                        return reader.ReadSchema(progressB, readOptions, ct);
-                    });
+                        schemaB = cachedB;
+                        var ageB = SchemaCache.GetAge(sideB.ServerName, sideB.DatabaseName);
+                        ProgressText = $"Using cached schema for [{sideB.Label}] (read {ageB?.TotalMinutes:F0} minutes ago)";
+                    }
+                    else
+                    {
+                        string phaseB = $"Database 2 of 2: [{sideB.Label}] ({sideB.ServerName}/{sideB.DatabaseName})";
+                        var progressB = new Progress<SchemaReadProgress>(p =>
+                        {
+                            ProgressText = $"{phaseB}  —  {p.CurrentOperation}";
+                            ProgressValue = p.CompletedItems;
+                            ProgressMaximum = p.TotalItems;
+                        });
 
-                    SchemaCache.Put(sideB.ServerName, sideB.DatabaseName, schemaB);
+                        ProgressText = phaseB;
+                        ProgressValue = 0;
+                        ProgressMaximum = 0;
+
+                        schemaB = await Task.Run(() =>
+                        {
+                            var reader = new SchemaReader(connStrB, sideB.DatabaseName);
+                            return reader.ReadSchema(progressB, readOptions, ct);
+                        });
+
+                        SchemaCache.Put(sideB.ServerName, sideB.DatabaseName, schemaB);
+                    }
                 }
 
                 ct.ThrowIfCancellationRequested();

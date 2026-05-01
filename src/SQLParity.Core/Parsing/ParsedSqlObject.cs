@@ -25,4 +25,12 @@ public sealed class ParsedSqlObject
 
     /// <summary>True if the source used <c>CREATE OR ALTER</c>.</summary>
     public required bool IsCreateOrAlter { get; init; }
+
+    /// <summary>
+    /// The database name set by the most recent <c>USE [DbName]</c> batch
+    /// before this CREATE statement, or null if no USE statement preceded it.
+    /// Used by folder mode to route each file's CREATE to the right database
+    /// connection on Side A.
+    /// </summary>
+    public string? TargetDatabase { get; init; }
 }

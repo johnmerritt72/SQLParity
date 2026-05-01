@@ -307,6 +307,114 @@ public class SqlFileParserTests
     }
 
     [Fact]
+    public void NoUseStatement_TargetDatabaseIsNull()
+    {
+        var obj = Assert.Single(Parser.Parse("CREATE PROC dbo.A AS SELECT 1"));
+        Assert.Null(obj.TargetDatabase);
+    }
+
+    [Fact]
+    public void SingleUse_BeforeCreate_TagsObject()
+    {
+        const string sql = "USE [Beta]\nGO\nCREATE PROC dbo.A AS SELECT 1\n";
+        var (objects, warnings) = ParseWithWarnings(sql);
+        var obj = Assert.Single(objects);
+        Assert.Equal("Beta", obj.TargetDatabase);
+        Assert.Empty(warnings);
+    }
+
+    [Fact]
+    public void MultipleUseStatements_EachPairsWithItsOwnCreate_NoWarning()
+    {
+        const string sql =
+            "USE [OrdersDb]\nGO\n" +
+            "CREATE PROC dbo.GetOrders AS SELECT 1\nGO\n" +
+            "USE [LookupDb]\nGO\n" +
+            "CREATE PROC dbo.GetLookup AS SELECT 1\nGO\n";
+        var (objects, warnings) = ParseWithWarnings(sql);
+        Assert.Equal(2, objects.Count);
+        Assert.Equal("OrdersDb", objects[0].TargetDatabase);
+        Assert.Equal("LookupDb", objects[1].TargetDatabase);
+        Assert.Empty(warnings);
+    }
+
+    [Fact]
+    public void TwoUseStatementsBeforeOneCreate_LaterOneWins_WithWarning()
+    {
+        const string sql =
+            "USE [OldDb]\nGO\n" +
+            "USE [NewDb]\nGO\n" +
+            "CREATE PROC dbo.A AS SELECT 1\nGO\n";
+        var (objects, warnings) = ParseWithWarnings(sql);
+        var obj = Assert.Single(objects);
+        Assert.Equal("NewDb", obj.TargetDatabase);
+        var warning = Assert.Single(warnings);
+        Assert.Contains("OldDb", warning);
+        Assert.Contains("NewDb", warning);
+    }
+
+    [Fact]
+    public void RedundantUseSameDatabase_NoWarning()
+    {
+        const string sql =
+            "USE [Beta]\nGO\n" +
+            "USE [Beta]\nGO\n" +
+            "CREATE PROC dbo.A AS SELECT 1\n";
+        var (objects, warnings) = ParseWithWarnings(sql);
+        Assert.Equal("Beta", Assert.Single(objects).TargetDatabase);
+        Assert.Empty(warnings);
+    }
+
+    [Fact]
+    public void UseStatement_BracketedAndUnbracketed_BothRecognized()
+    {
+        Assert.Equal("Beta", Assert.Single(Parser.Parse("USE [Beta]\nGO\nCREATE PROC dbo.A AS SELECT 1")).TargetDatabase);
+        Assert.Equal("Beta", Assert.Single(Parser.Parse("USE Beta\nGO\nCREATE PROC dbo.A AS SELECT 1")).TargetDatabase);
+        Assert.Equal("Beta", Assert.Single(Parser.Parse("USE [Beta];\nGO\nCREATE PROC dbo.A AS SELECT 1")).TargetDatabase);
+    }
+
+    [Fact]
+    public void UseStatementInsideBatchWithCreate_NotTreatedAsUseSeparator()
+    {
+        // A batch like "USE Foo CREATE PROC Bar AS SELECT 1" isn't a pure USE
+        // statement. We don't pretend to handle that — the batch as a whole
+        // is treated as a CREATE batch with no USE binding.
+        const string sql = "USE [Foo] CREATE PROC dbo.A AS SELECT 1";
+        var (objects, warnings) = ParseWithWarnings(sql);
+        var obj = Assert.Single(objects);
+        Assert.Null(obj.TargetDatabase);
+        Assert.Empty(warnings);
+    }
+
+    [Fact]
+    public void UseStatement_TrailingComment_StillRecognized()
+    {
+        const string sql = "USE [Beta] -- switch DBs\nGO\nCREATE PROC dbo.A AS SELECT 1";
+        Assert.Equal("Beta", Assert.Single(Parser.Parse(sql)).TargetDatabase);
+    }
+
+    [Fact]
+    public void OverruledUseAcrossThreeUses_OnlyLastWins_WarningListsAllOverruled()
+    {
+        const string sql =
+            "USE [DbA]\nGO\n" +
+            "USE [DbB]\nGO\n" +
+            "USE [DbC]\nGO\n" +
+            "CREATE PROC dbo.A AS SELECT 1\n";
+        var (objects, warnings) = ParseWithWarnings(sql);
+        Assert.Equal("DbC", Assert.Single(objects).TargetDatabase);
+        var w = Assert.Single(warnings);
+        Assert.Contains("DbA", w);
+        Assert.Contains("DbB", w);
+    }
+
+    private static (IReadOnlyList<ParsedSqlObject> Objects, IReadOnlyList<string> Warnings) ParseWithWarnings(string sql)
+    {
+        var objects = Parser.Parse(sql, out var warnings);
+        return (objects, warnings);
+    }
+
+    [Fact]
     public void BatchTextDoesNotIncludeTrailingGo()
     {
         const string sql = "CREATE PROC dbo.A AS SELECT 1\nGO\n";

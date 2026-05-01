@@ -17,19 +17,93 @@ namespace SQLParity.Core.Parsing;
 public sealed class SqlFileParser
 {
     public IReadOnlyList<ParsedSqlObject> Parse(string sqlText)
+        => Parse(sqlText, out _);
+
+    /// <summary>
+    /// Same as <see cref="Parse(string)"/> but also returns parse warnings —
+    /// currently used to flag <c>USE</c> statements that get overruled by a
+    /// later <c>USE</c> without an intervening CREATE.
+    /// </summary>
+    public IReadOnlyList<ParsedSqlObject> Parse(string sqlText, out IReadOnlyList<string> warnings)
     {
+        var warningList = new List<string>();
+        warnings = warningList;
+
         if (string.IsNullOrEmpty(sqlText))
             return Array.Empty<ParsedSqlObject>();
 
         var batches = SplitIntoBatches(sqlText);
         var results = new List<ParsedSqlObject>();
+
+        // Walk batches in order, tracking the most recent USE [Db] declaration.
+        // Each CREATE binds to the USE that immediately precedes it (or null
+        // if no USE has been seen yet). When two USEs appear with no CREATE
+        // between them, the earlier one is "overruled" and we emit a warning
+        // — the user almost certainly didn't mean to declare two databases
+        // back-to-back for a single object.
+        string? currentUseDb = null;
+        bool sawCreateSinceLastUse = true;
+        var overruled = new List<string>();
+
         for (int i = 0; i < batches.Count; i++)
         {
-            var obj = ExtractObject(batches[i], i);
+            string? useDb = DetectUseStatement(batches[i]);
+            if (useDb != null)
+            {
+                if (!sawCreateSinceLastUse && currentUseDb != null
+                    && !string.Equals(currentUseDb, useDb, StringComparison.OrdinalIgnoreCase))
+                {
+                    overruled.Add(currentUseDb);
+                }
+                currentUseDb = useDb;
+                sawCreateSinceLastUse = false;
+                continue;
+            }
+
+            var obj = ExtractObject(batches[i], i, currentUseDb);
             if (obj is not null)
+            {
                 results.Add(obj);
+                sawCreateSinceLastUse = true;
+            }
         }
+
+        if (overruled.Count > 0)
+        {
+            string list = string.Join(", ", overruled);
+            warningList.Add(
+                $"USE statement(s) for {list} were overruled by a later USE before any CREATE — "
+                + $"effective database is {currentUseDb}.");
+        }
+
         return results;
+    }
+
+    /// <summary>
+    /// Returns the database name from a batch that consists of a single
+    /// <c>USE [DbName]</c> statement (with optional surrounding whitespace
+    /// and a trailing semicolon). Returns null when the batch is anything
+    /// else — even a USE statement followed by other code.
+    /// </summary>
+    private static string? DetectUseStatement(string batch)
+    {
+        if (string.IsNullOrWhiteSpace(batch)) return null;
+
+        var first = NextSignificantWord(batch, 0);
+        if (first is null) return null;
+        if (!string.Equals(first.Value.Word, "USE", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var name = NextSignificantWord(batch, first.Value.NextPos);
+        if (name is null) return null;
+
+        // Anything after the name (other than an optional semicolon) means
+        // this batch isn't a pure USE statement.
+        var trailing = NextSignificantWord(batch, name.Value.NextPos);
+        if (trailing != null && trailing.Value.Word != ";")
+            return null;
+
+        return name.Value.Word;
     }
 
     /// <summary>
@@ -237,7 +311,7 @@ public sealed class SqlFileParser
     /// batch and extracts a <see cref="ParsedSqlObject"/>. Returns null when
     /// the batch contains no recognizable CREATE.
     /// </summary>
-    private static ParsedSqlObject? ExtractObject(string batch, int batchIndex)
+    private static ParsedSqlObject? ExtractObject(string batch, int batchIndex, string? targetDatabase = null)
     {
         int pos = 0;
 
@@ -284,6 +358,7 @@ public sealed class SqlFileParser
                 Ddl = batch,
                 BatchIndex = batchIndex,
                 IsCreateOrAlter = isCreateOrAlter,
+                TargetDatabase = targetDatabase,
             };
         }
 
@@ -328,6 +403,7 @@ public sealed class SqlFileParser
             Ddl = batch,
             BatchIndex = batchIndex,
             IsCreateOrAlter = isCreateOrAlter,
+            TargetDatabase = targetDatabase,
         };
     }
 

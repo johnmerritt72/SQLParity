@@ -36,18 +36,24 @@ public static class SchemaComparator
             ? (Func<string, string>)(s => NormalizeDdl(StripOptionalSqlBrackets(s)))
             : NormalizeDdl;
 
-        // In folder mode, table DDL on Side A is SMO's full multi-batch
-        // output (SET / CREATE TABLE / ALTER TABLE constraint blocks) while
-        // Side B holds only the parsed CREATE TABLE batch. Normalize both
-        // sides to the CREATE TABLE batch alone so a freshly synced folder
-        // doesn't re-appear as Modified on the next compare.
-        Func<string, string> tableNormalizer = sideBIsFolder
-            ? (Func<string, string>)(s => generalNormalizer(ExtractCreateBatch(s, ObjectType.Table)))
-            : generalNormalizer;
+        // Folder-aware normalizer factory: collapses both the CREATE/CREATE
+        // OR ALTER variants AND (in folder mode) the IF NOT EXISTS BEGIN ...
+        // END idempotency wrapper around the inner CREATE statement. SMO
+        // scripts the database side as a bare CREATE; SQLParity-generated
+        // files wrap it. Without this canonicalization every freshly-synced
+        // file re-appears as Modified on the next compare. Applied to every
+        // non-routine type (routines have their own composed normalizer).
+        Func<string, string> FolderAwareNormalizer(ObjectType type)
+        {
+            if (sideBIsFolder)
+                return s => generalNormalizer(StripCreateOrAlter(ExtractCreateBatch(s, type)));
+            return s => generalNormalizer(StripCreateOrAlter(s));
+        }
 
         // Tables
         if (options.IncludeTables)
-            changes.AddRange(CompareTables(sideA.Tables, sideB.Tables, tableNormalizer));
+            changes.AddRange(CompareTables(sideA.Tables, sideB.Tables,
+                FolderAwareNormalizer(ObjectType.Table)));
 
         // Views
         if (options.IncludeViews)
@@ -55,7 +61,7 @@ public static class SchemaComparator
                 sideA.Views, sideB.Views,
                 ObjectType.View,
                 v => v.Id, v => v.Ddl,
-                generalNormalizer));
+                FolderAwareNormalizer(ObjectType.View)));
 
         // Stored procedures and user-defined functions are both "routines" —
         // textual T-SQL bodies. They share the same routine-level normalizer,
@@ -90,7 +96,7 @@ public static class SchemaComparator
                 sideA.Sequences, sideB.Sequences,
                 ObjectType.Sequence,
                 s => s.Id, s => s.Ddl,
-                generalNormalizer));
+                FolderAwareNormalizer(ObjectType.Sequence)));
 
         // Synonyms
         if (options.IncludeSynonyms)
@@ -98,7 +104,7 @@ public static class SchemaComparator
                 sideA.Synonyms, sideB.Synonyms,
                 ObjectType.Synonym,
                 s => s.Id, s => s.Ddl,
-                generalNormalizer));
+                FolderAwareNormalizer(ObjectType.Synonym)));
 
         // UserDefinedDataTypes
         if (options.IncludeUserDefinedDataTypes)
@@ -106,7 +112,7 @@ public static class SchemaComparator
                 sideA.UserDefinedDataTypes, sideB.UserDefinedDataTypes,
                 ObjectType.UserDefinedDataType,
                 t => t.Id, t => t.Ddl,
-                generalNormalizer));
+                FolderAwareNormalizer(ObjectType.UserDefinedDataType)));
 
         // UserDefinedTableTypes
         if (options.IncludeUserDefinedTableTypes)
@@ -114,11 +120,18 @@ public static class SchemaComparator
                 sideA.UserDefinedTableTypes, sideB.UserDefinedTableTypes,
                 ObjectType.UserDefinedTableType,
                 t => t.Id, t => t.Ddl,
-                generalNormalizer));
+                FolderAwareNormalizer(ObjectType.UserDefinedTableType)));
 
-        // Schemas (match by Name, case-insensitive)
+        // Schemas (match by Name, case-insensitive). Note: the IdempotentDdlWrapper
+        // emits CREATE SCHEMA inside an EXEC(N'...') string literal because
+        // CREATE SCHEMA must be the first statement in its batch — but the
+        // parser treats EXEC arguments as opaque strings, so a SQLParity-
+        // generated schema file currently doesn't round-trip cleanly. Tracked
+        // as a known limitation; using the folder-aware normalizer here is a
+        // best-effort that won't make the situation worse.
         if (options.IncludeSchemas)
-            changes.AddRange(CompareSchemas(sideA.Schemas, sideB.Schemas, generalNormalizer));
+            changes.AddRange(CompareSchemas(sideA.Schemas, sideB.Schemas,
+                FolderAwareNormalizer(ObjectType.Schema)));
 
         // Folder-mode filter: when Side B is a folder of .sql files and the
         // user wants to focus only on objects represented in source control,
@@ -458,7 +471,14 @@ public static class SchemaComparator
             // Lowercase for case-insensitive comparison
             normalized.AppendLine(trimmed.ToLowerInvariant());
         }
-        return normalized.ToString().TrimEnd();
+        // Optional T-SQL statement terminator. Including or omitting it
+        // doesn't change the semantics of a CREATE statement, but SMO scripts
+        // omit it while wrapped/hand-written DDL often includes it — strip
+        // so they compare equal.
+        var result = normalized.ToString().TrimEnd();
+        while (result.EndsWith(";", StringComparison.Ordinal))
+            result = result.Substring(0, result.Length - 1).TrimEnd();
+        return result;
     }
 
     /// <summary>
@@ -1032,6 +1052,12 @@ public static class SchemaComparator
         }
 
         if (sb.Length > 0 && sb[sb.Length - 1] == ' ') sb.Length--;
+        // Optional trailing semicolon — see NormalizeDdl for the rationale.
+        while (sb.Length > 0 && sb[sb.Length - 1] == ';')
+        {
+            sb.Length--;
+            if (sb.Length > 0 && sb[sb.Length - 1] == ' ') sb.Length--;
+        }
         return sb.ToString();
     }
 

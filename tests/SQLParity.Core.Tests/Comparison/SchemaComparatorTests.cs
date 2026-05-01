@@ -831,6 +831,94 @@ public class SchemaComparatorTests
     }
 
     [Fact]
+    public void TableType_FolderMode_StripsIfNotExistsWrapper()
+    {
+        // User-reported case: a UDTT file on Side B uses an IF NOT EXISTS
+        // BEGIN … END guard with RAISERROR preamble, while Side A's SMO output
+        // is the bare CREATE TYPE … AS TABLE. Without folder-aware extraction
+        // of the CREATE batch they textually differ and falsely flag Modified.
+        const string smo =
+            "CREATE TYPE [dbo].[OrderRows] AS TABLE(\n" +
+            "    [Id] INT NOT NULL,\n" +
+            "    [Total] DECIMAL(10,2)\n" +
+            ")";
+        const string folder =
+            "---            OrderRows\n" +
+            "IF NOT EXISTS (\n" +
+            "    SELECT 1 FROM sys.types t\n" +
+            "    JOIN sys.schemas s ON t.schema_id = s.schema_id\n" +
+            "    WHERE t.name = 'OrderRows' AND s.name = 'dbo'\n" +
+            ")\n" +
+            "BEGIN\n" +
+            "    RAISERROR('Creating OrderRows', 0, 1) WITH NOWAIT;\n" +
+            "    CREATE TYPE [dbo].[OrderRows] AS TABLE(\n" +
+            "        [Id] INT NOT NULL,\n" +
+            "        [Total] DECIMAL(10,2)\n" +
+            "    );\n" +
+            "END";
+
+        var a = new DatabaseSchema
+        {
+            ServerName = "srvA", DatabaseName = "DbA", ReadAtUtc = DateTime.UtcNow,
+            Schemas = Array.Empty<SchemaModel>(),
+            Tables = Array.Empty<TableModel>(),
+            Views = Array.Empty<ViewModel>(),
+            StoredProcedures = Array.Empty<StoredProcedureModel>(),
+            Functions = Array.Empty<UserDefinedFunctionModel>(),
+            Sequences = Array.Empty<SequenceModel>(),
+            Synonyms = Array.Empty<SynonymModel>(),
+            UserDefinedDataTypes = Array.Empty<UserDefinedDataTypeModel>(),
+            UserDefinedTableTypes = new[] { new UserDefinedTableTypeModel
+            {
+                Id = SchemaQualifiedName.TopLevel("dbo", "OrderRows"),
+                Schema = "dbo", Name = "OrderRows",
+                Columns = Array.Empty<ColumnModel>(),
+                Ddl = smo,
+            } },
+        };
+        var b = new DatabaseSchema
+        {
+            ServerName = "Folder", DatabaseName = "DbB", ReadAtUtc = DateTime.UtcNow,
+            Schemas = Array.Empty<SchemaModel>(),
+            Tables = Array.Empty<TableModel>(),
+            Views = Array.Empty<ViewModel>(),
+            StoredProcedures = Array.Empty<StoredProcedureModel>(),
+            Functions = Array.Empty<UserDefinedFunctionModel>(),
+            Sequences = Array.Empty<SequenceModel>(),
+            Synonyms = Array.Empty<SynonymModel>(),
+            UserDefinedDataTypes = Array.Empty<UserDefinedDataTypeModel>(),
+            UserDefinedTableTypes = new[] { new UserDefinedTableTypeModel
+            {
+                Id = SchemaQualifiedName.TopLevel("dbo", "OrderRows"),
+                Schema = "dbo", Name = "OrderRows",
+                Columns = Array.Empty<ColumnModel>(),
+                Ddl = folder,
+            } },
+        };
+
+        var result = SchemaComparator.Compare(
+            a, b, SchemaReadOptions.All,
+            sideBIsFolder: true);
+
+        Assert.Empty(result.Changes);
+    }
+
+    [Fact]
+    public void View_CreateOrAlterVsCreate_ComparesEqual()
+    {
+        var viewA = MakeView("dbo", "OrderSummary",
+            "CREATE VIEW [dbo].[OrderSummary] AS SELECT 1");
+        var viewB = MakeView("dbo", "OrderSummary",
+            "CREATE OR ALTER VIEW [dbo].[OrderSummary] AS SELECT 1");
+        var a = WithViews(EmptySchema("DbA"), viewA);
+        var b = WithViews(EmptySchema("DbB"), viewB);
+
+        var result = SchemaComparator.Compare(a, b);
+
+        Assert.Empty(result.Changes);
+    }
+
+    [Fact]
     public void Table_FolderMode_StripsIfNotExistsWrapperAroundCreateOnSideB()
     {
         // What the parser actually captures from a SQLParity-generated file:

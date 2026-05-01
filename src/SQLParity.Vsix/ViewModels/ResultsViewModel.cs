@@ -326,12 +326,29 @@ namespace SQLParity.Vsix.ViewModels
                     OnPropertyChanged(nameof(SelectedChange));
                     OnPropertyChanged(nameof(SelectedObjectName));
                     OnPropertyChanged(nameof(SelectedRiskText));
+                    OnPropertyChanged(nameof(SelectedSideBFileName));
                     UpdateTableTree();
                 }
             }
         }
 
         public Change SelectedChange => _selectedTreeItem?.Change;
+
+        /// <summary>
+        /// Filename (no path) of the .sql file backing the selected change on
+        /// Side B in folder mode. Empty string when Side B is a live database
+        /// or when the object is New on Side A (no file yet). The Side B
+        /// header in the results view appends this so the user always knows
+        /// which file they're looking at.
+        /// </summary>
+        public string SelectedSideBFileName
+        {
+            get
+            {
+                var path = SelectedChange?.SourceFilePath;
+                return string.IsNullOrEmpty(path) ? string.Empty : System.IO.Path.GetFileName(path);
+            }
+        }
 
         public string SelectedDdlA
         {

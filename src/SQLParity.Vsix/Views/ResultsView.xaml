@@ -323,9 +323,27 @@
                         <TextBlock x:Name="DdlHeaderA" Grid.Row="0" Grid.Column="0" Text="{Binding Direction.LabelA, StringFormat='Side A: {0}'}"
                                    FontWeight="SemiBold" Margin="0,0,4,4"
                                    Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" />
-                        <TextBlock x:Name="DdlHeaderB" Grid.Row="0" Grid.Column="1" Text="{Binding Direction.LabelB, StringFormat='Side B: {0}'}"
-                                   FontWeight="SemiBold" Margin="4,0,0,4"
-                                   Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" />
+                        <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Margin="4,0,0,4">
+                            <TextBlock x:Name="DdlHeaderB"
+                                       Text="{Binding Direction.LabelB, StringFormat='Side B: {0}'}"
+                                       FontWeight="SemiBold"
+                                       Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" />
+                            <TextBlock Text="{Binding SelectedSideBFileName, StringFormat='   →   {0}'}"
+                                       FontStyle="Italic"
+                                       Foreground="Gray"
+                                       VerticalAlignment="Center">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding SelectedSideBFileName}" Value="">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
 
                         <Border x:Name="DdlBorderA" Grid.Row="1" Grid.Column="0"
                                 BorderThickness="2" CornerRadius="2" Margin="0,0,4,0"

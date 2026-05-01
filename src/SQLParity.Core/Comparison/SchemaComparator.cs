@@ -635,10 +635,38 @@ public static class SchemaComparator
             // every freshly-synced folder file would re-appear as Modified
             // on the next compare.
             s = StripCreateOrAlter(s);
+            // Same idea for PROC vs PROCEDURE — T-SQL accepts both as the
+            // same keyword. SMO scripts CREATE   PROC while folder files
+            // typically carry the long form CREATE PROCEDURE. Canonicalize
+            // to PROCEDURE so the textual diff doesn't fire on this alone.
+            s = NormalizeProcKeyword(s);
             if (ignoreComments) s = StripSqlComments(s);
             if (ignoreOptionalBrackets) s = StripOptionalSqlBrackets(s);
             return normalizeFinal(s);
         };
+    }
+
+    /// <summary>
+    /// Rewrites <c>CREATE PROC</c> (whitespace-tolerant) to
+    /// <c>CREATE PROCEDURE</c>. T-SQL treats the two as the same keyword;
+    /// the comparator must too. Comments, strings, and bracketed
+    /// identifiers are skipped while finding the leading CREATE.
+    /// </summary>
+    internal static string NormalizeProcKeyword(string ddl)
+    {
+        if (string.IsNullOrEmpty(ddl)) return string.Empty;
+
+        int createIdx = FindCreateKeyword(ddl);
+        if (createIdx < 0) return ddl;
+
+        int afterCreate = createIdx + "CREATE".Length;
+        int j = afterCreate;
+        while (j < ddl.Length && char.IsWhiteSpace(ddl[j])) j++;
+
+        if (!IsKeywordAt(ddl, j, "PROC")) return ddl;
+        // IsKeywordAt enforces word boundary, so j..j+4 is exactly "PROC"
+        // and the char after isn't an identifier char — i.e. not "PROCEDURE".
+        return ddl.Substring(0, j) + "PROCEDURE" + ddl.Substring(j + 4);
     }
 
     /// <summary>

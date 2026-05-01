@@ -752,6 +752,25 @@ public class SchemaComparatorTests
     }
 
     [Fact]
+    public void StoredProc_ProcVsProcedureKeyword_ComparesEqual()
+    {
+        // T-SQL treats PROC and PROCEDURE as the same keyword. SMO scripts
+        // databases as "CREATE   PROC" (sometimes with extra whitespace)
+        // while folder files written by SQLParity / typical SSMS scripts
+        // use "CREATE PROCEDURE" — both must canonicalize to the same form.
+        var procA = MakeProc("dbo", "Foo",
+            "CREATE   PROC [dbo].[Foo] AS SELECT 1");
+        var procB = MakeProc("dbo", "Foo",
+            "CREATE OR ALTER PROCEDURE [dbo].[Foo] AS SELECT 1");
+        var a = WithProcs(EmptySchema("DbA"), procA);
+        var b = WithProcs(EmptySchema("DbB"), procB);
+
+        var result = SchemaComparator.Compare(a, b);
+
+        Assert.Empty(result.Changes);
+    }
+
+    [Fact]
     public void StoredProc_CreateOrAlterVsCreate_ComparesEqual()
     {
         // After a folder sync, the file holds CREATE OR ALTER PROCEDURE while

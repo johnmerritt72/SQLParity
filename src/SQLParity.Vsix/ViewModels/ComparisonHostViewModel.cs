@@ -1048,7 +1048,11 @@ namespace SQLParity.Vsix.ViewModels
                     effectiveLimit, sideBIsFolder: true));
 
                 foreach (var c in perDbResult.Changes)
+                {
                     c.SourceDatabase = dbName;
+                    if (folderResult.Context.ObjectToFile.TryGetValue(c.Id, out var backing))
+                        c.SourceFilePath = backing.FilePath;
+                }
 
                 mergedChanges.AddRange(perDbResult.Changes);
                 perDbASchemas.Add(schemaA);

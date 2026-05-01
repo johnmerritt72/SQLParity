@@ -71,4 +71,12 @@ public sealed class Change
     /// single-DB comparisons (the existing default).
     /// </summary>
     public string? SourceDatabase { get; set; }
+
+    /// <summary>
+    /// In folder-mode comparisons, the absolute path of the .sql file that
+    /// contains this object's CREATE statement on Side B. Null when Side B
+    /// is a live database, or when the object is New on Side A (no file
+    /// backs it yet). Set by the host VM during the per-DB merge.
+    /// </summary>
+    public string? SourceFilePath { get; set; }
 }

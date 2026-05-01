@@ -363,6 +363,16 @@ namespace SQLParity.Vsix.ViewModels
             if (destination.IsFolderMode)
                 return true;
 
+            // Multi-database B→A: the change set spans multiple DBs but
+            // destination.BuildConnectionString() points at only one. A
+            // single COUNT query against that one DB doesn't match what's
+            // really being applied, so skip the verification entirely. The
+            // per-DB applies surface their own errors if drift hit them.
+            var resultRef = ResultsViewModel.ComparisonResult;
+            bool multiDb = resultRef?.Changes.Any(c => c.SourceDatabase != null) == true;
+            if (multiDb)
+                return true;
+
             // Determine original counts from the comparison result's destination side
             var originalResult = ResultsViewModel.ComparisonResult;
             if (originalResult == null)
@@ -671,6 +681,19 @@ namespace SQLParity.Vsix.ViewModels
             if (destination.IsFolderMode)
             {
                 await ApplyFolderWriteAsync(source, destination, selectedChanges);
+                return;
+            }
+
+            // Multi-database B→A branch (folder source, DB destination). Each
+            // change carries SourceDatabase from the multi-DB compare loop;
+            // changes route to the matching DB on Side A's server with Side
+            // A's credentials + InitialCatalog override. Single-DB folder
+            // syncs and DB↔DB syncs fall through to the legacy flow below
+            // since their changes have SourceDatabase == null.
+            bool multiDb = selectedChanges.Any(c => c.SourceDatabase != null);
+            if (multiDb)
+            {
+                await ApplyLiveMultiDbAsync(source, destination, selectedChanges);
                 return;
             }
 
@@ -1050,6 +1073,96 @@ namespace SQLParity.Vsix.ViewModels
                 SideB = MergeSchemas(perDbBSchemas, "Folder", sideB.Label),
                 Changes = mergedChanges,
             };
+        }
+
+        /// <summary>
+        /// Live-applies a multi-database change set to Side A. Used when the
+        /// comparison was sourced from a folder of .sql files declaring
+        /// multiple <c>USE [Db]</c> targets. Changes are grouped by
+        /// <c>SourceDatabase</c>, ordered within each group, and applied via
+        /// a per-DB <see cref="LiveApplier"/> using the destination side's
+        /// credentials with <c>InitialCatalog</c> overridden.
+        /// </summary>
+        private async Task ApplyLiveMultiDbAsync(
+            ConnectionSideViewModel source,
+            ConnectionSideViewModel destination,
+            List<Change> selectedChanges)
+        {
+            var byDb = selectedChanges
+                .GroupBy(c => c.SourceDatabase ?? destination.DatabaseName,
+                    StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            int totalSucceeded = 0;
+            int totalFailed = 0;
+            int totalAttempted = 0;
+            string firstError = null;
+
+            int dbIndex = 0;
+            foreach (var group in byDb)
+            {
+                dbIndex++;
+                string dbName = group.Key;
+                var changesForDb = group.ToList();
+                totalAttempted += changesForDb.Count;
+
+                var connStr = destination.BuildConnectionString(dbName);
+                var options = new ScriptGenerationOptions
+                {
+                    SourceServer = source.ServerName,
+                    SourceDatabase = source.IsFolderMode ? "(folder)" : source.DatabaseName,
+                    SourceLabel = source.Label,
+                    DestinationServer = destination.ServerName,
+                    DestinationDatabase = dbName,
+                    DestinationLabel = $"{destination.Label}/{dbName}",
+                };
+
+                ProgressText = $"Ordering [{dbName}] ({dbIndex} of {byDb.Count})…";
+                ProgressValue = 0;
+                ProgressMaximum = 0;
+
+                int totalForGroup = changesForDb.Count;
+                var applyProgress = new Progress<(int completed, int total, string current)>(p =>
+                {
+                    ProgressValue = p.completed;
+                    ProgressMaximum = p.total;
+                    ProgressText = $"Applying [{dbName}] ({dbIndex}/{byDb.Count})… {p.completed}/{p.total} — {p.current}";
+                });
+
+                try
+                {
+                    var applier = new LiveApplier(connStr);
+                    var groupResult = await Task.Run(() =>
+                    {
+                        var ordered = DependencyOrderer.Order(changesForDb).ToList();
+                        return applier.Apply(ordered, options, applyProgress);
+                    });
+
+                    totalSucceeded += groupResult.SucceededCount;
+                    totalFailed += groupResult.FailedCount;
+                    if (firstError == null && !groupResult.FullySucceeded)
+                    {
+                        var step = groupResult.Steps.FirstOrDefault(s => !s.Succeeded);
+                        firstError = $"[{dbName}] {step?.ErrorMessage ?? "Unknown"}";
+                    }
+                }
+                catch (Exception ex)
+                {
+                    totalFailed += changesForDb.Count;
+                    if (firstError == null) firstError = $"[{dbName}] {ex.Message}";
+                }
+            }
+
+            ProgressText = string.Empty;
+
+            string summary = totalFailed == 0
+                ? $"All {totalSucceeded} changes applied successfully across {byDb.Count} database(s)."
+                : $"Apply finished with errors. {totalSucceeded} succeeded, {totalFailed} failed across {byDb.Count} database(s).";
+            if (firstError != null)
+                summary += "\n\nFirst error: " + firstError;
+
+            ShowResultDialog(summary,
+                totalFailed > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
         }
 
         private static DatabaseSchema MakeEmptySchema(string serverName, string databaseName) => new()

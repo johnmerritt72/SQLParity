@@ -63,4 +63,12 @@ public sealed class Change
     /// Each entry is a human-readable descriptor like "MTD_01" or "[DbArchives] (linked server)".
     /// </summary>
     public IReadOnlyList<string> ExternalReferences { get; set; } = Array.Empty<string>();
+
+    /// <summary>
+    /// In folder-mode comparisons that span multiple databases on Side A,
+    /// the database this change belongs to. Set by the host VM after
+    /// running the comparator per-DB and merging the result. Null for
+    /// single-DB comparisons (the existing default).
+    /// </summary>
+    public string? SourceDatabase { get; set; }
 }

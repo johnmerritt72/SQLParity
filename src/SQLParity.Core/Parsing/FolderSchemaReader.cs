@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using SQLParity.Core.Model;
 
 namespace SQLParity.Core.Parsing;
@@ -41,33 +42,149 @@ public sealed class FolderSchemaReader
         string databaseName,
         bool recursive = false)
     {
+        var (parsedFiles, _) = ParseAllFiles(folderPath, recursive);
+
+        // Single-DB legacy path: every parsed object goes into the same bucket
+        // regardless of its TargetDatabase tag. Used by callers that haven't
+        // been migrated to the multi-DB API and by single-DB tests.
+        var fileEntries = parsedFiles
+            .Select(pf => (pf.FilePath, Objects: (IReadOnlyList<ParsedSqlObject>)pf.Objects, TotalInFile: pf.Objects.Count))
+            .ToList();
+        var allWarnings = parsedFiles.SelectMany(pf => pf.Warnings).ToList();
+        return BuildReadResult(folderPath, serverName, databaseName, fileEntries, allWarnings);
+    }
+
+    /// <summary>
+    /// Buckets parsed objects by their effective <c>TargetDatabase</c> (the
+    /// most recent <c>USE [Db]</c> in the file, or <paramref name="defaultDatabase"/>
+    /// when no USE is present) and returns one <see cref="FolderReadResult"/>
+    /// per database. The host VM uses this to drive a multi-DB Side A
+    /// comparison: each returned key is a database name to read from the
+    /// live server, and each value is the corresponding folder-side schema +
+    /// per-object source-file mapping.
+    /// </summary>
+    /// <remarks>
+    /// Databases that appear only inside an overruled USE statement (one
+    /// shadowed by a later USE before any CREATE) are NOT keys in the result —
+    /// they're filtered out by the parser and never tagged on any object.
+    /// </remarks>
+    public IReadOnlyDictionary<string, FolderReadResult> ReadFolderByDatabase(
+        string folderPath,
+        string serverName,
+        string defaultDatabase,
+        bool recursive = false)
+    {
+        if (string.IsNullOrEmpty(defaultDatabase))
+            throw new ArgumentException("Default database is required.", nameof(defaultDatabase));
+
+        var (parsedFiles, _) = ParseAllFiles(folderPath, recursive);
+
+        // Group each file's objects by effective DB. A single file with two
+        // USE statements that each route to a different DB will contribute
+        // entries to two different buckets.
+        var perDb = new Dictionary<string, List<(string FilePath, List<ParsedSqlObject> Objects, int TotalInFile)>>(
+            StringComparer.OrdinalIgnoreCase);
+        var perDbWarnings = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var pf in parsedFiles)
+        {
+            bool fileContributedToAnyBucket = false;
+            int totalInFile = pf.Objects.Count;
+            foreach (var group in pf.Objects.GroupBy(
+                o => o.TargetDatabase ?? defaultDatabase, StringComparer.OrdinalIgnoreCase))
+            {
+                fileContributedToAnyBucket = true;
+                if (!perDb.TryGetValue(group.Key, out var list))
+                {
+                    list = new List<(string, List<ParsedSqlObject>, int)>();
+                    perDb[group.Key] = list;
+                }
+                list.Add((pf.FilePath, group.ToList(), totalInFile));
+
+                if (pf.Warnings.Count > 0)
+                {
+                    if (!perDbWarnings.TryGetValue(group.Key, out var ws))
+                    {
+                        ws = new List<string>();
+                        perDbWarnings[group.Key] = ws;
+                    }
+                    ws.AddRange(pf.Warnings);
+                }
+            }
+
+            // A file that yielded no parsed objects (e.g. a read-error file or
+            // a USE-only file that hit an overrule warning) still has warnings
+            // worth surfacing. Attribute them to the defaultDatabase bucket so
+            // the user sees them; create the bucket if needed.
+            if (!fileContributedToAnyBucket && pf.Warnings.Count > 0)
+            {
+                if (!perDbWarnings.TryGetValue(defaultDatabase, out var ws))
+                {
+                    ws = new List<string>();
+                    perDbWarnings[defaultDatabase] = ws;
+                }
+                ws.AddRange(pf.Warnings);
+                if (!perDb.ContainsKey(defaultDatabase))
+                    perDb[defaultDatabase] = new List<(string, List<ParsedSqlObject>, int)>();
+            }
+        }
+
+        var result = new Dictionary<string, FolderReadResult>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (dbName, fileEntries) in perDb.Select(kv => (kv.Key, kv.Value)))
+        {
+            perDbWarnings.TryGetValue(dbName, out var ws);
+            var entries = fileEntries
+                .Select(e => (e.FilePath, (IReadOnlyList<ParsedSqlObject>)e.Objects, e.TotalInFile))
+                .ToList();
+            result[dbName] = BuildReadResult(folderPath, serverName, dbName,
+                entries, ws ?? new List<string>());
+        }
+        return result;
+    }
+
+    private (List<ParsedFile> Files, List<string> GlobalWarnings) ParseAllFiles(
+        string folderPath, bool recursive)
+    {
         if (string.IsNullOrEmpty(folderPath))
             throw new ArgumentException("Folder path is required.", nameof(folderPath));
         if (!Directory.Exists(folderPath))
             throw new DirectoryNotFoundException($"Folder not found: {folderPath}");
 
-        // recursive parameter intentionally ignored in v1.2 (see <param> doc above).
+        // recursive parameter intentionally ignored in v1.2 — only root-level
+        // *.sql files are read. Wired through so v1.3 subfolder support is a
+        // non-breaking addition.
         var sqlFiles = Directory.EnumerateFiles(folderPath, "*.sql", SearchOption.TopDirectoryOnly);
 
-        var warnings = new List<string>();
-        var allParsedByFile = new List<(string FilePath, IReadOnlyList<ParsedSqlObject> Objects)>();
-
+        var files = new List<ParsedFile>();
+        var globalWarnings = new List<string>();
         foreach (var file in sqlFiles)
         {
             string text;
-            try
-            {
-                text = File.ReadAllText(file);
-            }
+            try { text = File.ReadAllText(file); }
             catch (Exception ex)
             {
-                warnings.Add($"Could not read '{Path.GetFileName(file)}': {ex.Message}");
+                files.Add(new ParsedFile(file, Array.Empty<ParsedSqlObject>(),
+                    new[] { $"Could not read '{Path.GetFileName(file)}': {ex.Message}" }));
                 continue;
             }
 
-            var parsed = _parser.Parse(text);
-            allParsedByFile.Add((file, parsed));
+            var parsed = _parser.Parse(text, out var parseWarnings);
+            var prefixed = parseWarnings
+                .Select(w => $"{Path.GetFileName(file)}: {w}")
+                .ToList();
+            files.Add(new ParsedFile(file, parsed, prefixed));
         }
+        return (files, globalWarnings);
+    }
+
+    private static FolderReadResult BuildReadResult(
+        string folderPath,
+        string serverName,
+        string databaseName,
+        IReadOnlyList<(string FilePath, IReadOnlyList<ParsedSqlObject> Objects, int TotalInFile)> fileEntries,
+        IReadOnlyList<string> initialWarnings)
+    {
+        var warnings = new List<string>(initialWarnings);
 
         var tables = new List<TableModel>();
         var views = new List<ViewModel>();
@@ -82,9 +199,13 @@ public sealed class FolderSchemaReader
         var objectToFile = new Dictionary<SchemaQualifiedName, FileBacking>();
         var seenIds = new HashSet<SchemaQualifiedName>();
 
-        foreach (var (filePath, parsedList) in allParsedByFile)
+        foreach (var (filePath, parsedList, totalInFile) in fileEntries)
         {
-            bool isSingleObjectFile = parsedList.Count == 1;
+            // IsSingleObjectFile reflects the source file's total CREATE count,
+            // not the count for the current bucket. A multi-USE file with one
+            // object per DB has totalInFile == 2, so neither bucket gets the
+            // single-file optimization — the writer must split it.
+            bool isSingleObjectFile = totalInFile == 1;
             foreach (var obj in parsedList)
             {
                 if (!seenIds.Add(obj.Id))
@@ -95,7 +216,6 @@ public sealed class FolderSchemaReader
                     warnings.Add(
                         $"Duplicate object {obj.Id} found in '{Path.GetFileName(filePath)}' " +
                         $"(also defined in '{existingPath}'). Last definition wins.");
-                    // Remove the older entry from the per-type lists so the new one wins.
                     RemoveExistingEntry(obj.Id, tables, views, procs, functions,
                         sequences, synonyms, udts, tableTypes, schemas);
                 }
@@ -135,6 +255,19 @@ public sealed class FolderSchemaReader
         };
 
         return new FolderReadResult { Schema = schema, Context = context };
+    }
+
+    private readonly struct ParsedFile
+    {
+        public ParsedFile(string filePath, IReadOnlyList<ParsedSqlObject> objects, IReadOnlyList<string> warnings)
+        {
+            FilePath = filePath;
+            Objects = objects;
+            Warnings = warnings;
+        }
+        public string FilePath { get; }
+        public IReadOnlyList<ParsedSqlObject> Objects { get; }
+        public IReadOnlyList<string> Warnings { get; }
     }
 
     private static void AddToBucket(

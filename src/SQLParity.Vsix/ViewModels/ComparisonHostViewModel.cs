@@ -47,11 +47,13 @@ namespace SQLParity.Vsix.ViewModels
         private System.Threading.CancellationTokenSource _comparisonCts;
 
         /// <summary>
-        /// When Side B is folder-sourced, the parsed-objects-to-source-file map
-        /// produced by <see cref="FolderSchemaReader"/>. Stashed for the A→B
-        /// sync writer (step 7) to know which file backs each object.
+        /// When Side B is folder-sourced, one <see cref="FolderSchemaContext"/>
+        /// per database referenced by the folder's .sql files (keyed by DB
+        /// name, case-insensitive). The A→B sync writer reads this to know
+        /// which file backs each object — and which Side A connection to
+        /// use when re-loading any new-table DDL.
         /// </summary>
-        private FolderSchemaContext _sideBFolderContext;
+        private Dictionary<string, FolderSchemaContext> _sideBFolderContextsByDb;
 
         public ComparisonHostViewModel()
         {
@@ -241,19 +243,21 @@ namespace SQLParity.Vsix.ViewModels
                 // --- Read Side B (database 2 of 2, OR a folder of .sql files) ---
                 if (sideB.IsFolderMode)
                 {
-                    ProgressText = $"Reading solution folder [{sideB.Label}] at {sideB.FolderPath}";
-                    ProgressValue = 0;
-                    ProgressMaximum = 0;
-
-                    var folderResult = await Task.Run(() =>
-                        new FolderSchemaReader().ReadFolder(
-                            sideB.FolderPath, "Folder", sideB.Label, recursive: false));
-                    schemaB = folderResult.Schema;
-                    _sideBFolderContext = folderResult.Context;
+                    // Folder mode reads files first, groups parsed objects by
+                    // their declared USE [Db], and then re-reads Side A for
+                    // each referenced database. The DB read above (using
+                    // sideA.DatabaseName) is replaced — we'll discard schemaA
+                    // and read per-DB as needed. This avoids a wasted read of
+                    // a DB that no file actually targets.
+                    schemaA = null;
+                    result = await BuildMultiDbFolderResultAsync(
+                        sideA, sideB, readOptions,
+                        ignoreCommentsInSps, ignoreWhitespaceInSps, ignoreOptionalBrackets,
+                        limitToFolderObjects, ct);
                 }
                 else
                 {
-                    _sideBFolderContext = null;
+                    _sideBFolderContextsByDb = null;
                     var cachedB = SchemaCache.Get(sideB.ServerName, sideB.DatabaseName, cacheTtl);
                     if (cachedB != null && !sideB.ForceRefresh)
                     {
@@ -283,26 +287,15 @@ namespace SQLParity.Vsix.ViewModels
 
                         SchemaCache.Put(sideB.ServerName, sideB.DatabaseName, schemaB);
                     }
+
+                    ct.ThrowIfCancellationRequested();
+
+                    ProgressText = "Comparing schemas...";
+                    result = await Task.Run(() => SchemaComparator.Compare(
+                        schemaA, schemaB, readOptions,
+                        ignoreCommentsInSps, ignoreWhitespaceInSps, ignoreOptionalBrackets,
+                        limitToFolderObjects: false, sideBIsFolder: false));
                 }
-
-                ct.ThrowIfCancellationRequested();
-
-                ProgressText = "Comparing schemas...";
-
-                // Folder-mode-only filter: when Side B is folder-sourced (set
-                // in step 6), the user-configurable LimitComparisonToFolderObjects
-                // hides A-only changes. For DB↔DB compares the flag is forced
-                // off so today's behavior is preserved. An empty Side B (no
-                // objects parsed) also forces the flag off so the user sees all
-                // of A's objects — the explicit "scaffold from DB" workflow.
-                bool sideBIsFolder = sideB.IsFolderMode;
-                bool sideBIsEmpty = IsSchemaEmpty(schemaB);
-                bool effectiveLimit = sideBIsFolder && !sideBIsEmpty && limitToFolderObjects;
-
-                result = await Task.Run(() => SchemaComparator.Compare(
-                    schemaA, schemaB, readOptions,
-                    ignoreCommentsInSps, ignoreWhitespaceInSps, ignoreOptionalBrackets,
-                    effectiveLimit, sideBIsFolder));
 
                 ProgressText = string.Empty;
 
@@ -805,7 +798,7 @@ namespace SQLParity.Vsix.ViewModels
             ConnectionSideViewModel destination,
             List<Change> selectedChanges)
         {
-            if (_sideBFolderContext == null)
+            if (_sideBFolderContextsByDb == null || _sideBFolderContextsByDb.Count == 0)
             {
                 MessageBox.Show(
                     "Folder context is missing — re-run the comparison and try again.",
@@ -813,75 +806,106 @@ namespace SQLParity.Vsix.ViewModels
                 return;
             }
 
-            // Pre-load DDL for any New tables — same logic as the live-DB path.
-            // Without this, "New" tables would have empty DdlSideA and the
-            // writer would emit a CREATE TABLE wrapper around nothing.
-            var tablesNeedingDdl = selectedChanges
-                .Where(c => c.ObjectType == ObjectType.Table
-                    && c.Status == ChangeStatus.New
-                    && string.IsNullOrEmpty(c.DdlSideA))
+            // Group selected changes by their declared source database. Single-DB
+            // folders produce one group; multi-DB folders produce one per USE.
+            // Changes without a SourceDatabase tag (shouldn't happen post-multi-DB
+            // wiring but kept defensive) get routed to Side A's selected DB.
+            var byDb = selectedChanges
+                .GroupBy(c => c.SourceDatabase ?? source.DatabaseName,
+                    StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            if (tablesNeedingDdl.Count > 0)
+            int totalUpdated = 0, totalCreated = 0, totalCommentedOut = 0, totalSkipped = 0, totalErrors = 0;
+            string firstError = null;
+
+            int dbIndex = 0;
+            foreach (var group in byDb)
             {
-                ProgressText = $"Loading DDL for {tablesNeedingDdl.Count} tables...";
-                ProgressValue = 0;
-                ProgressMaximum = tablesNeedingDdl.Count;
+                dbIndex++;
+                string dbName = group.Key;
+                var changesForDb = group.ToList();
 
-                var sourceConnStr = source.BuildConnectionString();
-                var sourceDbName = source.DatabaseName;
-                int totalDdl = tablesNeedingDdl.Count;
-
-                var ddlProgress = new Progress<(int completed, string current)>(p =>
+                if (!_sideBFolderContextsByDb.TryGetValue(dbName, out var folderContext))
                 {
-                    ProgressValue = p.completed;
-                    ProgressText = $"Loading DDL... {p.completed}/{totalDdl}  —  {p.current}";
-                });
+                    // The change references a DB the comparison didn't read for —
+                    // shouldn't happen in practice. Skip with a counted "Skipped" entry.
+                    totalSkipped += changesForDb.Count;
+                    continue;
+                }
 
-                await Task.Run(() =>
+                // Pre-load DDL for any New tables in this group — query the
+                // matching source DB (not Side A's default DB) since each group
+                // corresponds to one live database.
+                var tablesNeedingDdl = changesForDb
+                    .Where(c => c.ObjectType == ObjectType.Table
+                        && c.Status == ChangeStatus.New
+                        && string.IsNullOrEmpty(c.DdlSideA))
+                    .ToList();
+
+                if (tablesNeedingDdl.Count > 0)
                 {
-                    var reader = new SQLParity.Core.SchemaReader(sourceConnStr, sourceDbName);
-                    int loaded = 0;
-                    foreach (var change in tablesNeedingDdl)
+                    ProgressText = $"Loading DDL for {tablesNeedingDdl.Count} table(s) in [{dbName}]…";
+                    ProgressValue = 0;
+                    ProgressMaximum = tablesNeedingDdl.Count;
+
+                    var connStr = source.BuildConnectionString(dbName);
+                    int totalDdl = tablesNeedingDdl.Count;
+
+                    var ddlProgress = new Progress<(int completed, string current)>(p =>
                     {
-                        try { change.DdlSideA = reader.ScriptTable(change.Id.Schema, change.Id.Name); }
-                        catch { /* per-table failures surface as empty CREATE blocks */ }
-                        loaded++;
-                        ((IProgress<(int, string)>)ddlProgress).Report((loaded, change.Id.ToString()));
-                    }
+                        ProgressValue = p.completed;
+                        ProgressText = $"Loading DDL [{dbName}]… {p.completed}/{totalDdl} — {p.current}";
+                    });
+
+                    await Task.Run(() =>
+                    {
+                        var reader = new SQLParity.Core.SchemaReader(connStr, dbName);
+                        int loaded = 0;
+                        foreach (var change in tablesNeedingDdl)
+                        {
+                            try { change.DdlSideA = reader.ScriptTable(change.Id.Schema, change.Id.Name); }
+                            catch { /* per-table failures surface as empty CREATE blocks */ }
+                            loaded++;
+                            ((IProgress<(int, string)>)ddlProgress).Report((loaded, change.Id.ToString()));
+                        }
+                    });
+                }
+
+                ProgressText = $"Writing [{dbName}] ({dbIndex} of {byDb.Count}) — {changesForDb.Count} change(s)…";
+                ProgressValue = 0;
+                ProgressMaximum = 0;
+
+                var manifest = await Task.Run(() =>
+                {
+                    var writer = new FolderSyncWriter();
+                    return writer.WriteChanges(
+                        changesForDb,
+                        folderContext,
+                        sourceServerName: source.ServerName,
+                        sourceDatabaseName: dbName,
+                        nowUtc: DateTime.UtcNow);
                 });
+
+                totalUpdated += manifest.FilesUpdated.Count;
+                totalCreated += manifest.FilesCreated.Count;
+                totalCommentedOut += manifest.FilesCommentedOut.Count;
+                totalSkipped += manifest.Skipped.Count;
+                totalErrors += manifest.Errors.Count;
+                if (firstError == null && manifest.Errors.Count > 0)
+                    firstError = $"[{dbName}] {manifest.Errors[0]}";
             }
-
-            ProgressText = $"Writing {selectedChanges.Count} change(s) to {destination.FolderPath}...";
-            ProgressValue = 0;
-            ProgressMaximum = 0;
-
-            WriteManifest manifest = await Task.Run(() =>
-            {
-                var writer = new FolderSyncWriter();
-                return writer.WriteChanges(
-                    selectedChanges,
-                    _sideBFolderContext,
-                    sourceServerName: source.ServerName,
-                    sourceDatabaseName: source.DatabaseName,
-                    nowUtc: DateTime.UtcNow);
-            });
 
             ProgressText = string.Empty;
 
             string summary = string.Format(
-                "Folder sync complete.\n\n  Updated: {0}\n  Created: {1}\n  Commented out: {2}\n  Skipped: {3}\n  Errors: {4}\n\nRe-run the comparison to refresh the change list.",
-                manifest.FilesUpdated.Count,
-                manifest.FilesCreated.Count,
-                manifest.FilesCommentedOut.Count,
-                manifest.Skipped.Count,
-                manifest.Errors.Count);
+                "Folder sync complete across {0} database(s).\n\n  Updated: {1}\n  Created: {2}\n  Commented out: {3}\n  Skipped: {4}\n  Errors: {5}\n\nRe-run the comparison to refresh the change list.",
+                byDb.Count, totalUpdated, totalCreated, totalCommentedOut, totalSkipped, totalErrors);
 
-            if (manifest.Errors.Count > 0)
-                summary += "\n\nFirst error: " + manifest.Errors[0];
+            if (firstError != null)
+                summary += "\n\nFirst error: " + firstError;
 
             ShowResultDialog(summary,
-                manifest.Errors.Count > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
+                totalErrors > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
 
             // Solution Explorer integration:
             //   - SSMS "Open Folder" mode (the modern, directory-based view)
@@ -908,6 +932,161 @@ namespace SQLParity.Vsix.ViewModels
                 MessageBox.Show(owner, text, "SQLParity", MessageBoxButton.OK, image);
             else
                 MessageBox.Show(text, "SQLParity", MessageBoxButton.OK, image);
+        }
+
+        /// <summary>
+        /// Multi-database folder-mode read+compare. Walks Side B's folder once,
+        /// groups parsed objects by their declared <c>USE [Db]</c>, then for
+        /// each referenced database reads Side A using the same credentials
+        /// with <c>InitialCatalog</c> overridden, runs the comparator, and
+        /// merges the result. Each <see cref="Change"/> is tagged with
+        /// <c>SourceDatabase</c> so the apply path knows where to route writes.
+        /// </summary>
+        private async Task<ComparisonResult> BuildMultiDbFolderResultAsync(
+            ConnectionSideViewModel sideA,
+            ConnectionSideViewModel sideB,
+            SchemaReadOptions readOptions,
+            bool ignoreCommentsInSps,
+            bool ignoreWhitespaceInSps,
+            bool ignoreOptionalBrackets,
+            bool limitToFolderObjects,
+            System.Threading.CancellationToken ct)
+        {
+            ProgressText = $"Reading solution folder [{sideB.Label}] at {sideB.FolderPath}";
+            ProgressValue = 0;
+            ProgressMaximum = 0;
+
+            var folderByDb = await Task.Run(() =>
+                new FolderSchemaReader().ReadFolderByDatabase(
+                    sideB.FolderPath, "Folder", sideA.DatabaseName, recursive: false));
+
+            // Stash per-DB folder contexts for the apply writer (step 5).
+            _sideBFolderContextsByDb = folderByDb.ToDictionary(
+                kv => kv.Key,
+                kv => kv.Value.Context,
+                StringComparer.OrdinalIgnoreCase);
+
+            // Empty folder special case: nothing to route, fall back to Side
+            // A's selected DB and a synthetic empty Side B so the user sees
+            // "all of A's objects as New" — the scaffold-from-DB workflow.
+            if (folderByDb.Count == 0)
+            {
+                ProgressText = "Folder is empty — reading Side A and showing all of it as New.";
+                var connStrFallback = sideA.BuildConnectionString();
+                var schemaA = await Task.Run(() =>
+                    new SchemaReader(connStrFallback, sideA.DatabaseName)
+                        .ReadSchema(null, readOptions, ct));
+                var emptyB = MakeEmptySchema("Folder", sideB.Label);
+                return SchemaComparator.Compare(
+                    schemaA, emptyB, readOptions,
+                    ignoreCommentsInSps, ignoreWhitespaceInSps, ignoreOptionalBrackets,
+                    limitToFolderObjects: false, sideBIsFolder: true);
+            }
+
+            var dbNames = folderByDb.Keys.ToList();
+            var mergedChanges = new List<Change>();
+            var perDbASchemas = new List<DatabaseSchema>();
+            var perDbBSchemas = new List<DatabaseSchema>();
+            var readWarnings = new List<string>();
+
+            int dbIndex = 0;
+            int dbTotal = dbNames.Count;
+            foreach (var dbName in dbNames)
+            {
+                ct.ThrowIfCancellationRequested();
+                dbIndex++;
+                ProgressText = $"Reading database {dbIndex} of {dbTotal}: [{dbName}]…";
+                ProgressValue = 0;
+                ProgressMaximum = 0;
+
+                var connStr = sideA.BuildConnectionString(dbName);
+                DatabaseSchema schemaA;
+                try
+                {
+                    schemaA = await Task.Run(() =>
+                        new SchemaReader(connStr, dbName).ReadSchema(null, readOptions, ct));
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    readWarnings.Add(
+                        $"Skipped database '{dbName}' — could not read schema: {ex.Message}");
+                    continue;
+                }
+
+                var folderResult = folderByDb[dbName];
+                var schemaB = folderResult.Schema;
+                bool effectiveLimit = limitToFolderObjects && !IsSchemaEmpty(schemaB);
+
+                ProgressText = $"Comparing [{dbName}] ({dbIndex} of {dbTotal})…";
+                var perDbResult = await Task.Run(() => SchemaComparator.Compare(
+                    schemaA, schemaB, readOptions,
+                    ignoreCommentsInSps, ignoreWhitespaceInSps, ignoreOptionalBrackets,
+                    effectiveLimit, sideBIsFolder: true));
+
+                foreach (var c in perDbResult.Changes)
+                    c.SourceDatabase = dbName;
+
+                mergedChanges.AddRange(perDbResult.Changes);
+                perDbASchemas.Add(schemaA);
+                perDbBSchemas.Add(schemaB);
+            }
+
+            // Surface any read warnings so the user notices DBs that were
+            // skipped (permission issues, missing DBs, etc.).
+            if (readWarnings.Count > 0 || folderByDb.Values.Any(r => r.Context.ParseWarnings.Count > 0))
+            {
+                var sb = new System.Text.StringBuilder();
+                foreach (var w in readWarnings) sb.AppendLine(w);
+                foreach (var r in folderByDb.Values)
+                    foreach (var w in r.Context.ParseWarnings) sb.AppendLine(w);
+                if (sb.Length > 0)
+                    StatusMessage = "Folder-mode warnings:\n" + sb.ToString().TrimEnd();
+            }
+
+            return new ComparisonResult
+            {
+                SideA = MergeSchemas(perDbASchemas, sideA.ServerName, $"{dbTotal} database(s)"),
+                SideB = MergeSchemas(perDbBSchemas, "Folder", sideB.Label),
+                Changes = mergedChanges,
+            };
+        }
+
+        private static DatabaseSchema MakeEmptySchema(string serverName, string databaseName) => new()
+        {
+            ServerName = serverName,
+            DatabaseName = databaseName,
+            ReadAtUtc = DateTime.UtcNow,
+            Schemas = Array.Empty<SchemaModel>(),
+            Tables = Array.Empty<TableModel>(),
+            Views = Array.Empty<ViewModel>(),
+            StoredProcedures = Array.Empty<StoredProcedureModel>(),
+            Functions = Array.Empty<UserDefinedFunctionModel>(),
+            Sequences = Array.Empty<SequenceModel>(),
+            Synonyms = Array.Empty<SynonymModel>(),
+            UserDefinedDataTypes = Array.Empty<UserDefinedDataTypeModel>(),
+            UserDefinedTableTypes = Array.Empty<UserDefinedTableTypeModel>(),
+        };
+
+        private static DatabaseSchema MergeSchemas(
+            IReadOnlyList<DatabaseSchema> schemas, string serverName, string databaseName)
+        {
+            if (schemas.Count == 0) return MakeEmptySchema(serverName, databaseName);
+            return new DatabaseSchema
+            {
+                ServerName = serverName,
+                DatabaseName = databaseName,
+                ReadAtUtc = DateTime.UtcNow,
+                Schemas = schemas.SelectMany(s => s.Schemas).ToList(),
+                Tables = schemas.SelectMany(s => s.Tables).ToList(),
+                Views = schemas.SelectMany(s => s.Views).ToList(),
+                StoredProcedures = schemas.SelectMany(s => s.StoredProcedures).ToList(),
+                Functions = schemas.SelectMany(s => s.Functions).ToList(),
+                Sequences = schemas.SelectMany(s => s.Sequences).ToList(),
+                Synonyms = schemas.SelectMany(s => s.Synonyms).ToList(),
+                UserDefinedDataTypes = schemas.SelectMany(s => s.UserDefinedDataTypes).ToList(),
+                UserDefinedTableTypes = schemas.SelectMany(s => s.UserDefinedTableTypes).ToList(),
+            };
         }
 
         /// <summary>

@@ -219,6 +219,112 @@ public class FolderSchemaReaderTests
     }
 
     [Fact]
+    public void ReadFolderByDatabase_NoUseStatements_AllRouteToDefaultDb()
+    {
+        using var t = new TempFolder();
+        t.WriteFile("PROC.dbo.A.sql", "CREATE PROC dbo.A AS SELECT 1");
+        t.WriteFile("PROC.dbo.B.sql", "CREATE PROC dbo.B AS SELECT 2");
+
+        var result = Reader.ReadFolderByDatabase(t.Path, "srv", defaultDatabase: "MyDb");
+
+        var entry = Assert.Single(result);
+        Assert.Equal("MyDb", entry.Key);
+        Assert.Equal(2, entry.Value.Schema.StoredProcedures.Count);
+    }
+
+    [Fact]
+    public void ReadFolderByDatabase_PerFileUse_RoutesToDeclaredDb()
+    {
+        using var t = new TempFolder();
+        t.WriteFile("orders.sql",
+            "USE [OrdersDb]\nGO\n" +
+            "CREATE PROC dbo.GetOrders AS SELECT 1\n");
+        t.WriteFile("lookup.sql",
+            "USE [LookupDb]\nGO\n" +
+            "CREATE PROC dbo.GetLookup AS SELECT 1\n");
+
+        var result = Reader.ReadFolderByDatabase(t.Path, "srv", defaultDatabase: "DefaultDb");
+
+        Assert.Equal(2, result.Count);
+        Assert.True(result.ContainsKey("OrdersDb"));
+        Assert.True(result.ContainsKey("LookupDb"));
+        Assert.False(result.ContainsKey("DefaultDb"));
+
+        Assert.Equal("GetOrders", Assert.Single(result["OrdersDb"].Schema.StoredProcedures).Name);
+        Assert.Equal("GetLookup", Assert.Single(result["LookupDb"].Schema.StoredProcedures).Name);
+    }
+
+    [Fact]
+    public void ReadFolderByDatabase_MixedFiles_GroupCorrectly()
+    {
+        using var t = new TempFolder();
+        // File with USE.
+        t.WriteFile("orders.sql",
+            "USE [OrdersDb]\nGO\nCREATE PROC dbo.GetOrders AS SELECT 1\n");
+        // File without USE → goes to default.
+        t.WriteFile("default.sql",
+            "CREATE PROC dbo.Default AS SELECT 1\n");
+
+        var result = Reader.ReadFolderByDatabase(t.Path, "srv", defaultDatabase: "MainDb");
+
+        Assert.Equal(2, result.Count);
+        Assert.Equal("GetOrders", Assert.Single(result["OrdersDb"].Schema.StoredProcedures).Name);
+        Assert.Equal("Default", Assert.Single(result["MainDb"].Schema.StoredProcedures).Name);
+    }
+
+    [Fact]
+    public void ReadFolderByDatabase_OneFileMultipleUses_SplitsObjectsAcrossDbs()
+    {
+        // Multi-object file with two USE statements, each routing one object.
+        using var t = new TempFolder();
+        var path = t.WriteFile("multi.sql",
+            "USE [OrdersDb]\nGO\n" +
+            "CREATE PROC dbo.GetOrders AS SELECT 1\nGO\n" +
+            "USE [LookupDb]\nGO\n" +
+            "CREATE PROC dbo.GetLookup AS SELECT 2\nGO\n");
+
+        var result = Reader.ReadFolderByDatabase(t.Path, "srv", defaultDatabase: "DefaultDb");
+
+        Assert.Equal(2, result.Count);
+        var ordersBacking = result["OrdersDb"].Context.ObjectToFile.Values.Single();
+        var lookupBacking = result["LookupDb"].Context.ObjectToFile.Values.Single();
+        Assert.Equal(path, ordersBacking.FilePath);
+        Assert.Equal(path, lookupBacking.FilePath);
+        // The same file is shared across two DBs — neither side considers it
+        // a single-object file because the source file holds two objects.
+        Assert.False(ordersBacking.IsSingleObjectFile);
+        Assert.False(lookupBacking.IsSingleObjectFile);
+    }
+
+    [Fact]
+    public void ReadFolderByDatabase_EmptyFolder_ReturnsEmptyDictionary()
+    {
+        using var t = new TempFolder();
+        var result = Reader.ReadFolderByDatabase(t.Path, "srv", defaultDatabase: "DefaultDb");
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void ReadFolderByDatabase_OverruledUseWarning_AppearsInTargetDbBucket()
+    {
+        // Single-object file with USEs A then B before the CREATE → warning,
+        // last-USE wins. The warning should surface on the DB the object
+        // actually routed to (B), not the overruled one (A).
+        using var t = new TempFolder();
+        t.WriteFile("misc.sql",
+            "USE [DbA]\nGO\nUSE [DbB]\nGO\nCREATE PROC dbo.X AS SELECT 1\n");
+
+        var result = Reader.ReadFolderByDatabase(t.Path, "srv", defaultDatabase: "DefaultDb");
+
+        Assert.Single(result);
+        Assert.True(result.ContainsKey("DbB"));
+        Assert.False(result.ContainsKey("DbA"));   // overruled, not a bucket
+        var warning = Assert.Single(result["DbB"].Context.ParseWarnings);
+        Assert.Contains("DbA", warning);
+        Assert.Contains("DbB", warning);
+    }
+
+    [Fact]
     public void DdlOnObject_PreservesSourceTextIncludingHeaderComments()
     {
         using var t = new TempFolder();

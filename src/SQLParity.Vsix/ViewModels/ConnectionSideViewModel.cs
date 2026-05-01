@@ -282,12 +282,20 @@ namespace SQLParity.Vsix.ViewModels
             catch { }
         }
 
-        public string BuildConnectionString()
+        public string BuildConnectionString() => BuildConnectionString(null);
+
+        /// <summary>
+        /// Builds a connection string using this side's credentials but with
+        /// a caller-specified database. Used by folder mode's multi-DB Side A
+        /// flow, which needs to read each USE-referenced database with the
+        /// same credentials.
+        /// </summary>
+        public string BuildConnectionString(string? overrideDatabase)
         {
             var builder = new SqlConnectionStringBuilder
             {
                 DataSource = ServerName,
-                InitialCatalog = DatabaseName,
+                InitialCatalog = overrideDatabase ?? DatabaseName,
                 TrustServerCertificate = true,
             };
 

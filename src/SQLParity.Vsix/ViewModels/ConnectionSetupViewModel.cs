@@ -23,6 +23,18 @@ namespace SQLParity.Vsix.ViewModels
             SideA.PropertyChanged += OnSidePropertyChanged;
             SideB.PropertyChanged += OnSidePropertyChanged;
 
+            // Live-track SSMS's solution open/close so the Folder Mode radio
+            // enables the moment a solution opens — no need to reopen the
+            // SQLParity window. The service raises this event on the UI
+            // thread (where IVsSolutionEvents callbacks fire), so the
+            // PropertyChanged invocation is thread-safe for WPF bindings.
+            try
+            {
+                SsmsSolutionService.EnsureSubscribed();
+                SsmsSolutionService.SolutionStateChanged += OnSolutionStateChanged;
+            }
+            catch { /* SDK service unavailable in tests / design-time */ }
+
             // When the user toggles Side B to folder mode, auto-populate the
             // folder path from SSMS's open solution. If no solution is open,
             // bounce the toggle back to database mode (the UI will show the
@@ -48,6 +60,19 @@ namespace SQLParity.Vsix.ViewModels
                         SideB.Label = "Solution Folder";
                 }
             };
+        }
+
+        private void OnSolutionStateChanged(object sender, EventArgs e)
+        {
+            OnPropertyChanged(nameof(IsSolutionOpen));
+            // If the user had Folder mode selected and the solution closes,
+            // bounce the toggle back to Database mode so the IsComplete
+            // gate doesn't trap them with a now-stale folder path.
+            if (!IsSolutionOpen && SideB.IsFolderMode)
+            {
+                SideB.IsFolderMode = false;
+                SideB.FolderPath = string.Empty;
+            }
         }
 
         /// <summary>True when the host SSMS instance has a solution loaded.</summary>

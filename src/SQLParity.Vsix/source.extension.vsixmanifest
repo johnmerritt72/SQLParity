@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
   <Metadata>
-    <Identity Id="SQLParity.214618a2-e13a-49d0-a25a-ac0f2ae6e811" Version="1.2.3" Language="en-US" Publisher="SQLParity" />
+    <Identity Id="SQLParity.214618a2-e13a-49d0-a25a-ac0f2ae6e811" Version="1.2.4" Language="en-US" Publisher="SQLParity" />
     <DisplayName>SQLParity</DisplayName>
     <Description xml:space="preserve">Schema comparison and sync for SQL Server databases.</Description>
     <Tags>ssms, sql server, schema, compare, sync</Tags>

@@ -72,7 +72,7 @@ public static class IdempotentDdlWrapper
                 => EnsureCreateOrAlter(bareDdl),
 
             ObjectType.Table
-                => WrapWithObjectIdGuard(schema, name, "U", bareDdl),
+                => WrapWithObjectIdGuard(schema, name, "U", ExtractCreateBatch(bareDdl, ObjectType.Table)),
 
             ObjectType.UserDefinedDataType
                 => WrapWithTypesGuard(schema, name, isTableType: false, bareDdl),
@@ -295,4 +295,23 @@ public static class IdempotentDdlWrapper
     private static bool IsIdentChar(char c)
         => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
         || (c >= '0' && c <= '9') || c == '_' || c == '@' || c == '#' || c == '$';
+
+    /// <summary>
+    /// SMO scripts tables as a multi-batch stream (SET ANSI_NULLS / SET
+    /// QUOTED_IDENTIFIER / CREATE TABLE / ALTER TABLE constraint blocks).
+    /// Wrapping that whole stream inside <c>IF OBJECT_ID(…) IS NULL BEGIN …
+    /// END</c> would put GOs inside a BEGIN/END block — invalid T-SQL because
+    /// the client splits on GO. We extract just the CREATE batch and wrap
+    /// only that. v1.2 limitation: constraints scripted as separate ALTER
+    /// statements are not preserved in the folder file.
+    /// </summary>
+    private static string ExtractCreateBatch(string bareDdl, ObjectType expectedType)
+    {
+        if (string.IsNullOrEmpty(bareDdl)) return bareDdl ?? string.Empty;
+        var parsed = new SqlFileParser().Parse(bareDdl);
+        foreach (var p in parsed)
+            if (p.ObjectType == expectedType)
+                return p.Ddl;
+        return bareDdl;
+    }
 }

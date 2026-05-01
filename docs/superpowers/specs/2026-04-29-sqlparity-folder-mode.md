@@ -43,7 +43,9 @@ Live-apply button label becomes **"Write to Folder"**. Behavior per change:
   ```
   The original CREATE stays in the file as a `/* ... */` block (historical reference per user request).
 
-After writes, modified/added files are registered with the open SSMS solution via the DTE so they appear in Solution Explorer immediately.
+After writes, the user sees the new files in Solution Explorer:
+- **SSMS "Open Folder" mode** (the modern directory-based view) auto-detects new files on disk — no programmatic action needed. *Confirmed empirically in v1.2 testing.*
+- **Traditional .ssmssln + .ssmsproj solutions** list files explicitly in the project file. New files won't appear until the user does "Add → Existing Item". Programmatic registration via the DTE `ProjectItems.AddFromFile` API is deferred to v1.3 when/if anyone reports needing it.
 
 ### 3.5 Sync direction B→A
 Reuses the existing `ScriptGenerator` / `LiveApplier`. The `Change` records produced by the comparator already carry both DDL strings; they don't care that Side B came from a file. No new code on this path beyond the comparator wiring.

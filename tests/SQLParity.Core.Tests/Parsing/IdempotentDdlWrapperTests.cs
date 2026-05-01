@@ -187,6 +187,31 @@ public class IdempotentDdlWrapperTests
     }
 
     [Fact]
+    public void Table_MultiBatchSmoOutput_ExtractsCreateBatchOnly()
+    {
+        // SMO scripts tables as multiple GO-separated batches: SET ANSI_NULLS,
+        // SET QUOTED_IDENTIFIER, CREATE TABLE, then one ALTER TABLE per default
+        // constraint. Wrapping the whole thing in IF OBJECT_ID … BEGIN … END
+        // would put GOs inside a BEGIN/END block, which is malformed T-SQL.
+        // The wrapper must extract just the CREATE TABLE batch.
+        const string smo =
+            "SET ANSI_NULLS ON\nGO\n" +
+            "SET QUOTED_IDENTIFIER ON\nGO\n" +
+            "CREATE TABLE [dbo].[Orders] (Id INT NOT NULL)\nGO\n" +
+            "ALTER TABLE [dbo].[Orders] ADD CONSTRAINT DF_Orders_Total DEFAULT ((0)) FOR [Total]\nGO\n";
+
+        var output = IdempotentDdlWrapper.Wrap(
+            ObjectType.Table, "dbo", "Orders", smo);
+
+        Assert.Contains("CREATE TABLE [dbo].[Orders]", output);
+        Assert.DoesNotContain("SET ANSI_NULLS", output);
+        Assert.DoesNotContain("ALTER TABLE", output);
+        Assert.DoesNotContain("DEFAULT ((0))", output);
+        // The IF OBJECT_ID guard surrounds the CREATE.
+        Assert.Contains("IF OBJECT_ID(N'[dbo].[Orders]', N'U') IS NULL", output);
+    }
+
+    [Fact]
     public void CreateInsideHeaderComment_DoesNotConfuseOrAlterRewrite()
     {
         // The leading CREATE inside a comment must not be rewritten — the real

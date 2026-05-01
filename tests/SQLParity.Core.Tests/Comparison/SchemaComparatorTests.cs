@@ -752,6 +752,117 @@ public class SchemaComparatorTests
     }
 
     [Fact]
+    public void StoredProc_CreateOrAlterVsCreate_ComparesEqual()
+    {
+        // After a folder sync, the file holds CREATE OR ALTER PROCEDURE while
+        // the live DB scripts back as plain CREATE PROCEDURE. Both forms must
+        // canonicalize to the same string so a freshly-synced proc doesn't
+        // show as Modified on the next compare.
+        var procA = MakeProc("dbo", "Foo",
+            "CREATE PROCEDURE [dbo].[Foo] AS SELECT 1");
+        var procB = MakeProc("dbo", "Foo",
+            "CREATE OR ALTER PROCEDURE [dbo].[Foo] AS SELECT 1");
+        var a = WithProcs(EmptySchema("DbA"), procA);
+        var b = WithProcs(EmptySchema("DbB"), procB);
+
+        var result = SchemaComparator.Compare(a, b);
+
+        Assert.Empty(result.Changes);
+    }
+
+    [Fact]
+    public void Function_CreateOrAlterVsCreate_ComparesEqual()
+    {
+        var fA = MakeFunc("dbo", "F",
+            "CREATE FUNCTION [dbo].[F]() RETURNS INT AS BEGIN RETURN 1 END");
+        var fB = MakeFunc("dbo", "F",
+            "CREATE OR ALTER FUNCTION [dbo].[F]() RETURNS INT AS BEGIN RETURN 1 END");
+        var a = WithFuncs(EmptySchema("DbA"), fA);
+        var b = WithFuncs(EmptySchema("DbB"), fB);
+
+        var result = SchemaComparator.Compare(a, b);
+
+        Assert.Empty(result.Changes);
+    }
+
+    [Fact]
+    public void Table_FolderMode_IgnoresSetAndAlterBatches()
+    {
+        // Side A: full SMO output (SET / CREATE TABLE / ALTER TABLE constraint).
+        // Side B: just the CREATE TABLE batch (what the parser captures from
+        // a written file). With sideBIsFolder=true, both must canonicalize to
+        // the CREATE batch alone.
+        const string smo =
+            "SET ANSI_NULLS ON\nGO\n" +
+            "SET QUOTED_IDENTIFIER ON\nGO\n" +
+            "CREATE TABLE [dbo].[Orders] (Id INT NOT NULL)\nGO\n" +
+            "ALTER TABLE [dbo].[Orders] ADD CONSTRAINT DF_Orders_X DEFAULT ((0)) FOR [Id]\nGO\n";
+        const string folder = "CREATE TABLE [dbo].[Orders] (Id INT NOT NULL)";
+
+        var tA = MakeTable("dbo", "Orders", ddl: smo);
+        var tB = MakeTable("dbo", "Orders", ddl: folder);
+        var a = WithTables(EmptySchema("DbA"), tA);
+        var b = WithTables(EmptySchema("DbB"), tB);
+
+        var result = SchemaComparator.Compare(
+            a, b, SchemaReadOptions.All,
+            sideBIsFolder: true);
+
+        Assert.Empty(result.Changes);
+    }
+
+    [Fact]
+    public void Table_FolderMode_StripsIfNotExistsWrapperAroundCreateOnSideB()
+    {
+        // What the parser actually captures from a SQLParity-generated file:
+        // the entire "IF OBJECT_ID(…) IS NULL BEGIN <CREATE> END" batch. The
+        // comparator must strip the wrapper before the equality check or every
+        // freshly-synced table re-appears as Modified on the next compare.
+        const string smo =
+            "SET ANSI_NULLS ON\nGO\n" +
+            "CREATE TABLE [dbo].[Orders] (Id INT NOT NULL)\nGO\n";
+        const string folderWrapped =
+            "IF OBJECT_ID(N'[dbo].[Orders]', N'U') IS NULL\n" +
+            "BEGIN\n" +
+            "    CREATE TABLE [dbo].[Orders] (Id INT NOT NULL)\n" +
+            "END";
+
+        var tA = MakeTable("dbo", "Orders", ddl: smo);
+        var tB = MakeTable("dbo", "Orders", ddl: folderWrapped);
+        var a = WithTables(EmptySchema("DbA"), tA);
+        var b = WithTables(EmptySchema("DbB"), tB);
+
+        var result = SchemaComparator.Compare(
+            a, b, SchemaReadOptions.All,
+            sideBIsFolder: true);
+
+        Assert.Empty(result.Changes);
+    }
+
+    [Fact]
+    public void Table_FolderMode_StillDetectsRealCreateBatchDifference()
+    {
+        // Confirm the folder-mode normalizer hasn't disabled detection
+        // entirely — a column-name change inside the CREATE TABLE batch
+        // still surfaces as Modified.
+        const string smo =
+            "SET ANSI_NULLS ON\nGO\n" +
+            "CREATE TABLE [dbo].[Orders] (Id INT NOT NULL)\nGO\n";
+        const string folder = "CREATE TABLE [dbo].[Orders] (RenamedId INT NOT NULL)";
+
+        var tA = MakeTable("dbo", "Orders", ddl: smo);
+        var tB = MakeTable("dbo", "Orders", ddl: folder);
+        var a = WithTables(EmptySchema("DbA"), tA);
+        var b = WithTables(EmptySchema("DbB"), tB);
+
+        var result = SchemaComparator.Compare(
+            a, b, SchemaReadOptions.All,
+            sideBIsFolder: true);
+
+        Assert.Single(result.Changes);
+    }
+
+    [Fact]
     public void LimitToFolderObjects_DropsAOnlyChanges()
     {
         // Side A has a proc that doesn't exist in Side B (the "folder").

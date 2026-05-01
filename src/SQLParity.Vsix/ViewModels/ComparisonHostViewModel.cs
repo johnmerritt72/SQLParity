@@ -302,7 +302,7 @@ namespace SQLParity.Vsix.ViewModels
                 result = await Task.Run(() => SchemaComparator.Compare(
                     schemaA, schemaB, readOptions,
                     ignoreCommentsInSps, ignoreWhitespaceInSps, ignoreOptionalBrackets,
-                    effectiveLimit));
+                    effectiveLimit, sideBIsFolder));
 
                 ProgressText = string.Empty;
 
@@ -363,6 +363,12 @@ namespace SQLParity.Vsix.ViewModels
                 destination = SetupViewModel.SideB;
             else
                 destination = SetupViewModel.SideA;
+
+            // Folder destination has no live DB to query — the verify step is a
+            // no-op. The folder writer does its own freshness check by reading
+            // current file contents per object before overwriting.
+            if (destination.IsFolderMode)
+                return true;
 
             // Determine original counts from the comparison result's destination side
             var originalResult = ResultsViewModel.ComparisonResult;
@@ -824,14 +830,24 @@ namespace SQLParity.Vsix.ViewModels
 
                 var sourceConnStr = source.BuildConnectionString();
                 var sourceDbName = source.DatabaseName;
+                int totalDdl = tablesNeedingDdl.Count;
+
+                var ddlProgress = new Progress<(int completed, string current)>(p =>
+                {
+                    ProgressValue = p.completed;
+                    ProgressText = $"Loading DDL... {p.completed}/{totalDdl}  —  {p.current}";
+                });
 
                 await Task.Run(() =>
                 {
                     var reader = new SQLParity.Core.SchemaReader(sourceConnStr, sourceDbName);
+                    int loaded = 0;
                     foreach (var change in tablesNeedingDdl)
                     {
                         try { change.DdlSideA = reader.ScriptTable(change.Id.Schema, change.Id.Name); }
                         catch { /* per-table failures surface as empty CREATE blocks */ }
+                        loaded++;
+                        ((IProgress<(int, string)>)ddlProgress).Report((loaded, change.Id.ToString()));
                     }
                 });
             }
@@ -864,15 +880,34 @@ namespace SQLParity.Vsix.ViewModels
             if (manifest.Errors.Count > 0)
                 summary += "\n\nFirst error: " + manifest.Errors[0];
 
-            MessageBox.Show(summary, "SQLParity",
-                MessageBoxButton.OK,
+            ShowResultDialog(summary,
                 manifest.Errors.Count > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
 
-            // Note: Solution Explorer does not auto-refresh when files appear
-            // on disk inside its folder. v1.2 ships without programmatic SE
-            // registration — the user can right-click the folder in SE and
-            // "Refresh" to see new files. Auto-registration via the DTE
-            // ProjectItems API is a v1.3 follow-up.
+            // Solution Explorer integration:
+            //   - SSMS "Open Folder" mode (the modern, directory-based view)
+            //     watches the filesystem and auto-shows new files. No work
+            //     needed — confirmed working empirically.
+            //   - Traditional .ssmssln + .ssmsproj solutions list files
+            //     explicitly in the project file. Programmatic registration
+            //     via DTE.Solution.Projects.Item(N).ProjectItems.AddFromFile
+            //     is required to make new files visible without a manual
+            //     "Add Existing Item". Deferred to v1.3 when (if) anyone
+            //     reports needing it.
+        }
+
+        /// <summary>
+        /// Shows a result MessageBox owned by the host application's main window
+        /// so it can't render behind the comparison tool window. Falls back to
+        /// the ownerless overload if no main window is available (e.g. during
+        /// early shutdown).
+        /// </summary>
+        private static void ShowResultDialog(string text, MessageBoxImage image)
+        {
+            var owner = System.Windows.Application.Current?.MainWindow;
+            if (owner != null && owner.IsVisible)
+                MessageBox.Show(owner, text, "SQLParity", MessageBoxButton.OK, image);
+            else
+                MessageBox.Show(text, "SQLParity", MessageBoxButton.OK, image);
         }
 
         /// <summary>

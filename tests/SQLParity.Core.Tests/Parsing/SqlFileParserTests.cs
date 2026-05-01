@@ -374,15 +374,22 @@ public class SqlFileParserTests
     }
 
     [Fact]
-    public void UseStatementInsideBatchWithCreate_NotTreatedAsUseSeparator()
+    public void UseStatement_OnSameLineAsOtherStatement_IsRecognized()
     {
-        // A batch like "USE Foo CREATE PROC Bar AS SELECT 1" isn't a pure USE
-        // statement. We don't pretend to handle that — the batch as a whole
-        // is treated as a CREATE batch with no USE binding.
-        const string sql = "USE [Foo] CREATE PROC dbo.A AS SELECT 1";
+        // SSMS-generated scripts often wrap a USE between RAISERROR / PRINT
+        // preambles. As long as USE starts its own line, the line-based
+        // scan should pick it up. (The artificial single-line "USE [Foo]
+        // CREATE PROC …" would actually fail to compile in T-SQL, since
+        // CREATE PROC must be the first statement in its batch — so the
+        // "lenient" reading is fine for any valid input.)
+        const string sql =
+            "RAISERROR('  - USE [Security] ...', 0, 1) WITH NOWAIT;\n" +
+            "USE [Security]\n" +
+            "GO\n" +
+            "CREATE PROC dbo.A AS SELECT 1";
         var (objects, warnings) = ParseWithWarnings(sql);
         var obj = Assert.Single(objects);
-        Assert.Null(obj.TargetDatabase);
+        Assert.Equal("Security", obj.TargetDatabase);
         Assert.Empty(warnings);
     }
 
@@ -391,6 +398,31 @@ public class SqlFileParserTests
     {
         const string sql = "USE [Beta] -- switch DBs\nGO\nCREATE PROC dbo.A AS SELECT 1";
         Assert.Equal("Beta", Assert.Single(Parser.Parse(sql)).TargetDatabase);
+    }
+
+    [Fact]
+    public void RealWorldSsmsScript_WithRaiserrorPreamble_RoutesUseCorrectly()
+    {
+        // Reconstructed from a user-reported file that had RAISERROR / PRINT
+        // logging mixed in with USE in the same batch. The parser previously
+        // required a "pure" USE batch and silently dropped the routing,
+        // sending [Security] procs to the default DB — where they didn't
+        // exist, so they showed as DROP DESTRUCTIVE.
+        const string sql =
+            "RAISERROR('Script ID: …', 0, 1) WITH NOWAIT;\nGO\n\n" +
+            "DECLARE @ScriptEnv nvarchar(15) = CONVERT(nvarchar, CONNECTIONPROPERTY('local_net_address'))\n" +
+            "RAISERROR('Script Environment: %s (%s)', 0, 1, @ScriptEnv, @@servername) WITH NOWAIT;\nGO\n\n" +
+            "RAISERROR('  - USE Security ...', 0, 1) WITH NOWAIT;\n" +
+            "USE [Security]\nGO\n\n" +
+            "/****** Object: StoredProcedure [Security].[Permission_List] ******/\n" +
+            "SET ANSI_NULLS ON\nGO\n" +
+            "SET QUOTED_IDENTIFIER ON\nGO\n\n" +
+            "CREATE OR ALTER PROC [Security].[Permission_List] AS BEGIN SELECT 1 END\nGO\n";
+        var (objects, warnings) = ParseWithWarnings(sql);
+        var obj = Assert.Single(objects);
+        Assert.Equal("Security", obj.TargetDatabase);
+        Assert.Equal("Permission_List", obj.Id.Name);
+        Assert.Empty(warnings);
     }
 
     [Fact]

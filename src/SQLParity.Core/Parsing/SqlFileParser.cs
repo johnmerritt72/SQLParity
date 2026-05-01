@@ -80,30 +80,71 @@ public sealed class SqlFileParser
     }
 
     /// <summary>
-    /// Returns the database name from a batch that consists of a single
-    /// <c>USE [DbName]</c> statement (with optional surrounding whitespace
-    /// and a trailing semicolon). Returns null when the batch is anything
-    /// else — even a USE statement followed by other code.
+    /// Scans a batch line-by-line for any line that begins (after leading
+    /// whitespace) with <c>USE &lt;name&gt;</c>. Returns the name from the
+    /// LAST such line in the batch (later USEs in the same batch shadow
+    /// earlier ones). Returns null when no USE-starting line is found.
     /// </summary>
+    /// <remarks>
+    /// SSMS-generated scripts commonly mix RAISERROR / PRINT preambles
+    /// with the actual <c>USE [Db]</c> statement in the same batch — for
+    /// example:
+    /// <code>
+    /// RAISERROR('  - USE Security ...', 0, 1) WITH NOWAIT;
+    /// USE [Security]
+    /// GO
+    /// </code>
+    /// A whole-batch parse would treat this as "not a USE batch" and miss
+    /// the routing. Per-line scanning catches it as long as USE is at the
+    /// start of its own line, which is the universal convention.
+    /// </remarks>
     private static string? DetectUseStatement(string batch)
     {
         if (string.IsNullOrWhiteSpace(batch)) return null;
 
-        var first = NextSignificantWord(batch, 0);
-        if (first is null) return null;
-        if (!string.Equals(first.Value.Word, "USE", StringComparison.OrdinalIgnoreCase))
-            return null;
+        string? lastFoundDb = null;
+        foreach (var rawLine in batch.Split('\n'))
+        {
+            var line = rawLine.TrimStart();
+            if (line.Length < 4) continue;
+            // Must start with "USE" as a whole word.
+            if ((line[0] != 'U' && line[0] != 'u')
+                || (line[1] != 'S' && line[1] != 's')
+                || (line[2] != 'E' && line[2] != 'e'))
+                continue;
+            // Word boundary after "USE" — next char must be whitespace.
+            if (!char.IsWhiteSpace(line[3])) continue;
 
-        var name = NextSignificantWord(batch, first.Value.NextPos);
-        if (name is null) return null;
+            string after = line.Substring(3).TrimStart();
+            string? name = ExtractFirstIdentifier(after);
+            if (name != null) lastFoundDb = name;
+        }
+        return lastFoundDb;
+    }
 
-        // Anything after the name (other than an optional semicolon) means
-        // this batch isn't a pure USE statement.
-        var trailing = NextSignificantWord(batch, name.Value.NextPos);
-        if (trailing != null && trailing.Value.Word != ";")
-            return null;
-
-        return name.Value.Word;
+    /// <summary>
+    /// Reads a leading bracketed or regular identifier from <paramref name="s"/>.
+    /// Returns null when no identifier is found at the start.
+    /// </summary>
+    private static string? ExtractFirstIdentifier(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return null;
+        if (s[0] == '[')
+        {
+            int end = 1;
+            while (end < s.Length)
+            {
+                if (s[end] == ']' && end + 1 < s.Length && s[end + 1] == ']') { end += 2; continue; }
+                if (s[end] == ']') break;
+                end++;
+            }
+            if (end >= s.Length) return null;
+            return s.Substring(1, end - 1).Replace("]]", "]");
+        }
+        if (!IsIdentStart(s[0])) return null;
+        int e = 1;
+        while (e < s.Length && IsIdentChar(s[e])) e++;
+        return s.Substring(0, e);
     }
 
     /// <summary>

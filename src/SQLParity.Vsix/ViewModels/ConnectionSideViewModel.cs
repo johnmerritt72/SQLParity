@@ -282,6 +282,47 @@ namespace SQLParity.Vsix.ViewModels
             catch { }
         }
 
+        /// <summary>
+        /// Apply a specific saved connection's credentials to this side, using the
+        /// caller-supplied server/database names verbatim. Suppresses the
+        /// <see cref="ServerName"/>-setter auto-fill so it does not race a second
+        /// <c>FindByServer</c> lookup against the partially populated state, then
+        /// kicks off an async connect to populate the database dropdown.
+        ///
+        /// Used by the "Compare Selected Database" menu command, which already
+        /// knows the exact (server, database) pair from the Object Explorer node.
+        /// </summary>
+        public void LoadFromSavedConnection(SavedConnection saved, string overrideServer, string overrideDatabase)
+        {
+            if (saved == null) return;
+
+            _isAutoFilling = true;
+            try
+            {
+                ServerName = overrideServer ?? string.Empty;
+                DatabaseName = overrideDatabase ?? string.Empty;
+
+                if (!string.IsNullOrWhiteSpace(saved.Label))
+                    Label = saved.Label;
+
+                UseWindowsAuth = saved.UseWindowsAuth;
+                if (!saved.UseWindowsAuth)
+                {
+                    SqlLogin = saved.SqlLogin ?? string.Empty;
+                    if (PasswordSavingEnabled())
+                        SqlPassword = saved.GetPassword();
+                }
+            }
+            finally
+            {
+                _isAutoFilling = false;
+            }
+
+            // Auto-connect to populate the database list. Fire-and-forget mirrors
+            // the existing ServerName-setter auto-fill behaviour.
+            ConnectAsyncNoRefresh();
+        }
+
         public string BuildConnectionString() => BuildConnectionString(null);
 
         /// <summary>

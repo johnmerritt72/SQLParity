@@ -324,6 +324,12 @@ namespace SQLParity.Vsix.ViewModels
         {
             if (saved == null) return;
 
+            // Clear any stale list left over from a prior connect on this side
+            // so the DatabaseName setter's "successful connect" gate (which uses
+            // AvailableDatabases.Contains) doesn't fire a save against credentials
+            // that haven't been verified against the new server yet.
+            AvailableDatabases.Clear();
+
             _isAutoFilling = true;
             try
             {

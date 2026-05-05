@@ -22,6 +22,7 @@ namespace SQLParity.Vsix.ViewModels
         private bool _isLoadingDdl;
         private int _ddlLoadGeneration;
         private string _filterText = string.Empty;
+        private string _defaultDbNameA = string.Empty;
 
         public ResultsViewModel()
         {
@@ -327,12 +328,38 @@ namespace SQLParity.Vsix.ViewModels
                     OnPropertyChanged(nameof(SelectedObjectName));
                     OnPropertyChanged(nameof(SelectedRiskText));
                     OnPropertyChanged(nameof(SelectedSideBFileName));
+                    OnPropertyChanged(nameof(CurrentSideALabel));
                     UpdateTableTree();
                 }
             }
         }
 
         public Change SelectedChange => _selectedTreeItem?.Change;
+
+        /// <summary>
+        /// Side A's pane-header label with a database-name suffix that tracks
+        /// the currently-selected change. In multi-DB folder-mode comparisons
+        /// the suffix matches <see cref="Change.SourceDatabase"/> of the
+        /// selected change so the user can see which database the displayed
+        /// object lives in. Falls back to a per-comparison default
+        /// (<c>_defaultDbNameA</c>) before any change is selected — empty
+        /// when the comparison spans 2+ source databases, the single source
+        /// database when the folder targets one DB, or
+        /// <c>SideA.DatabaseName</c> when the comparison is live-vs-live.
+        /// </summary>
+        public string CurrentSideALabel
+        {
+            get
+            {
+                var activeDbName = !string.IsNullOrEmpty(SelectedChange?.SourceDatabase)
+                    ? SelectedChange.SourceDatabase
+                    : _defaultDbNameA;
+
+                return string.IsNullOrEmpty(activeDbName)
+                    ? Direction.LabelA
+                    : $"{Direction.LabelA} ({activeDbName})";
+            }
+        }
 
         /// <summary>
         /// Filename (no path) of the .sql file backing the selected change on
@@ -501,6 +528,27 @@ namespace SQLParity.Vsix.ViewModels
             _connStrB = sideB.BuildConnectionString();
             _dbNameA = sideA.DatabaseName;
             _dbNameB = sideB.DatabaseName;
+
+            // Determine the default DB-name suffix for Side A's header before
+            // any change is selected. Three cases:
+            //   - 0 distinct SourceDatabase values across changes → live-vs-live;
+            //     fall back to the user's connection DatabaseName.
+            //   - 1 distinct value → folder targets one DB; show that one (which
+            //     may differ from what the user picked in Setup).
+            //   - 2+ distinct values → folder spans multiple DBs; drop the
+            //     suffix until the user clicks a change in the tree.
+            var distinctSourceDbs = result.Changes
+                .Select(c => c.SourceDatabase)
+                .Where(s => !string.IsNullOrEmpty(s))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (distinctSourceDbs.Count == 0)
+                _defaultDbNameA = sideA.DatabaseName ?? string.Empty;
+            else if (distinctSourceDbs.Count == 1)
+                _defaultDbNameA = distinctSourceDbs[0];
+            else
+                _defaultDbNameA = string.Empty;
+
             Direction.PopulateFrom(sideA, sideB);
             Direction.Direction = SyncDirection.AtoB; // Default to A→B
 
@@ -555,6 +603,7 @@ namespace SQLParity.Vsix.ViewModels
                 TreeItems.Add(g);
 
             OnPropertyChanged(nameof(SummaryText));
+            OnPropertyChanged(nameof(CurrentSideALabel));
         }
 
         public IEnumerable<Change> GetSelectedChanges()

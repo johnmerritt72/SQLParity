@@ -507,14 +507,24 @@ namespace SQLParity.Vsix.ViewModels
             // Build tree in a temporary list to avoid per-item UI updates
             var tempGroups = new List<ChangeTreeItemViewModel>();
 
+            // Group by (ObjectType, SourceDatabase) so multi-DB folder-mode
+            // comparisons split each object-type branch into one node per
+            // database. SourceDatabase is null for single-DB compares (live
+            // vs live), in which case the label is just ObjectType.ToString()
+            // and behaviour matches the pre-multi-DB tree.
             var grouped = result.Changes
-                .GroupBy(c => c.ObjectType)
-                .OrderBy(g => g.Key.ToString());
+                .GroupBy(c => new { c.ObjectType, c.SourceDatabase })
+                .OrderBy(g => g.Key.ObjectType.ToString(), StringComparer.Ordinal)
+                .ThenBy(g => g.Key.SourceDatabase ?? string.Empty, StringComparer.OrdinalIgnoreCase);
 
             foreach (var group in grouped)
             {
+                string groupLabel = string.IsNullOrEmpty(group.Key.SourceDatabase)
+                    ? group.Key.ObjectType.ToString()
+                    : $"{group.Key.ObjectType} ({group.Key.SourceDatabase})";
+
                 var groupNode = new ChangeTreeItemViewModel(
-                    group.Key.ToString(),
+                    groupLabel,
                     isGroup: true,
                     change: null);
 

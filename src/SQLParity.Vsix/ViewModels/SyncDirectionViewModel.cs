@@ -17,6 +17,8 @@ namespace SQLParity.Vsix.ViewModels
         private SyncDirection _direction = SyncDirection.Unset;
         private string _labelA = string.Empty;
         private string _labelB = string.Empty;
+        private string _labelAWithDb = string.Empty;
+        private string _labelBWithDb = string.Empty;
         private EnvironmentTag _tagA;
         private EnvironmentTag _tagB;
 
@@ -159,13 +161,47 @@ namespace SQLParity.Vsix.ViewModels
 
         public event EventHandler DirectionChanged;
 
+        /// <summary>
+        /// Label + " (DatabaseName)" suffix for Side A's results-pane header.
+        /// Falls back to <see cref="LabelA"/> when the side is in folder mode
+        /// or has no database name. Updated by <see cref="PopulateFrom"/>;
+        /// not driven by the <see cref="LabelA"/> setter because the suffix
+        /// depends on the side's database/folder state, not on the label
+        /// alone.
+        /// </summary>
+        public string LabelAWithDb
+        {
+            get => _labelAWithDb;
+            private set => SetProperty(ref _labelAWithDb, value);
+        }
+
+        /// <summary>
+        /// Label + " (DatabaseName)" suffix for Side B's results-pane header.
+        /// Falls back to <see cref="LabelB"/> when the side is in folder mode
+        /// or has no database name.
+        /// </summary>
+        public string LabelBWithDb
+        {
+            get => _labelBWithDb;
+            private set => SetProperty(ref _labelBWithDb, value);
+        }
+
         public void PopulateFrom(ConnectionSideViewModel sideA, ConnectionSideViewModel sideB)
         {
             LabelA = sideA.Label;
             TagA = sideA.Tag;
             LabelB = sideB.Label;
             TagB = sideB.Tag;
+            LabelAWithDb = ComposeLabelWithDb(sideA);
+            LabelBWithDb = ComposeLabelWithDb(sideB);
             Direction = SyncDirection.Unset;
+        }
+
+        private static string ComposeLabelWithDb(ConnectionSideViewModel side)
+        {
+            if (side.IsFolderMode || string.IsNullOrWhiteSpace(side.DatabaseName))
+                return side.Label;
+            return $"{side.Label} ({side.DatabaseName})";
         }
     }
 }

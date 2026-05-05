@@ -271,6 +271,20 @@ namespace SQLParity.Vsix.ViewModels
         /// </summary>
         public void SaveToHistory()
         {
+            SaveCurrentConnection();
+        }
+
+        /// <summary>
+        /// Persist the current (Server, Database, auth, login, optional password,
+        /// Label) tuple to the connection-history store. Returns silently if either
+        /// ServerName or DatabaseName is blank, or if the underlying store throws.
+        ///
+        /// Centralises the SaveConnection call shared by SaveToHistory (Continue
+        /// gate), the DoConnectAsync post-connect path, and the DatabaseName
+        /// setter's "user picked a DB after a successful connect" trigger.
+        /// </summary>
+        private void SaveCurrentConnection()
+        {
             if (string.IsNullOrWhiteSpace(ServerName) || string.IsNullOrWhiteSpace(DatabaseName))
                 return;
             try
@@ -496,15 +510,11 @@ namespace SQLParity.Vsix.ViewModels
                     DatabaseName = string.Empty;
                 }
 
-                // Save to history after successful connect (include label).
-                // Only save if we have a valid DatabaseName — saving a blank DB
-                // would overwrite the good one and cause the same issue next time.
-                if (!string.IsNullOrWhiteSpace(DatabaseName))
-                {
-                    var savePassword = !UseWindowsAuth && PasswordSavingEnabled();
-                    _historyStore.SaveConnection(ServerName, DatabaseName, UseWindowsAuth, SqlLogin,
-                        savePassword ? SqlPassword : null, Label);
-                }
+                // Save to history after successful connect.
+                // SaveCurrentConnection is a no-op when DatabaseName is blank, so
+                // we don't double-guard here (saving blank would overwrite the
+                // good row and cause the same issue next time).
+                SaveCurrentConnection();
                 if (refreshServerList)
                 {
                     var currentServer = ServerName;

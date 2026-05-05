@@ -320,12 +320,12 @@
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
 
-                        <TextBlock x:Name="DdlHeaderA" Grid.Row="0" Grid.Column="0" Text="{Binding Direction.LabelA, StringFormat='Side A: {0}'}"
+                        <TextBlock x:Name="DdlHeaderA" Grid.Row="0" Grid.Column="0" Text="{Binding Direction.LabelAWithDb, StringFormat='Side A: {0}'}"
                                    FontWeight="SemiBold" Margin="0,0,4,4"
                                    Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" />
                         <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Margin="4,0,0,4">
                             <TextBlock x:Name="DdlHeaderB"
-                                       Text="{Binding Direction.LabelB, StringFormat='Side B: {0}'}"
+                                       Text="{Binding Direction.LabelBWithDb, StringFormat='Side B: {0}'}"
                                        FontWeight="SemiBold"
                                        Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" />
                             <TextBlock Text="{Binding SelectedSideBFileName, StringFormat='   →   {0}'}"

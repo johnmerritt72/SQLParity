@@ -50,8 +50,7 @@ namespace SQLParity.Vsix.ViewModels
                     if (string.IsNullOrEmpty(dir))
                     {
                         SideB.IsFolderMode = false;
-                        DuplicateLabelWarning = "Open a SSMS Solution before switching Side B to Folder mode.";
-                        OnPropertyChanged(nameof(HasValidationError));
+                        ValidationWarning = "Open a SSMS Solution before switching Side B to Folder mode.";
                         return;
                     }
 
@@ -104,11 +103,30 @@ namespace SQLParity.Vsix.ViewModels
 
         public bool HasValidationError => HasDuplicateLabels || HasSameDatabase;
 
-        public string DuplicateLabelWarning
+        /// <summary>
+        /// Free-form red warning text shown above the Continue button. Carries
+        /// any of: duplicate-label warning, same-database warning, connect
+        /// failure during the Continue-time validation, missing-folder error,
+        /// or "open a solution before switching to folder mode". Empty string
+        /// when no warning to show.
+        /// </summary>
+        public string ValidationWarning
         {
             get => _validationWarning;
-            private set => SetProperty(ref _validationWarning, value);
+            private set
+            {
+                if (SetProperty(ref _validationWarning, value))
+                    OnPropertyChanged(nameof(HasValidationWarning));
+            }
         }
+
+        /// <summary>
+        /// True when <see cref="ValidationWarning"/> has visible content.
+        /// Drives the visibility of the warning TextBlock in the setup view.
+        /// Replaces the prior bind-to-HasDuplicateLabels which silently hid
+        /// connect-failure and folder-missing errors.
+        /// </summary>
+        public bool HasValidationWarning => !string.IsNullOrWhiteSpace(_validationWarning);
 
         public event EventHandler ContinueRequested;
 
@@ -156,11 +174,11 @@ namespace SQLParity.Vsix.ViewModels
 
             // Build warning message
             if (HasDuplicateLabels)
-                DuplicateLabelWarning = "Side A and Side B have the same label. Please use distinct labels.";
+                ValidationWarning = "Side A and Side B have the same label. Please use distinct labels.";
             else if (HasSameDatabase)
-                DuplicateLabelWarning = "Side A and Side B point to the same database. Please select different databases.";
+                ValidationWarning = "Side A and Side B point to the same database. Please select different databases.";
             else
-                DuplicateLabelWarning = string.Empty;
+                ValidationWarning = string.Empty;
 
             OnPropertyChanged(nameof(HasValidationError));
         }
@@ -176,7 +194,7 @@ namespace SQLParity.Vsix.ViewModels
         private async void OnContinueRequested()
         {
             IsValidating = true;
-            DuplicateLabelWarning = string.Empty;
+            ValidationWarning = string.Empty;
             try
             {
                 // Validate each side per its mode: live DB → can it connect?
@@ -191,8 +209,7 @@ namespace SQLParity.Vsix.ViewModels
                 if (errorA != null || errorB != null)
                 {
                     var msg = string.Join("\n", new[] { errorA, errorB });
-                    DuplicateLabelWarning = msg.Trim();
-                    OnPropertyChanged(nameof(HasValidationError));
+                    ValidationWarning = msg.Trim();
                     return;
                 }
 

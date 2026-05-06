@@ -6,13 +6,14 @@
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
     </UserControl.Resources>
     <DockPanel Margin="12">
-        <!-- Duplicate label warning -->
+        <!-- Validation warning (duplicate labels, same DB, connect failure, missing folder, etc.) -->
         <TextBlock DockPanel.Dock="Bottom"
-                   Text="{Binding DuplicateLabelWarning}"
+                   Text="{Binding ValidationWarning}"
                    Foreground="Red" FontWeight="SemiBold"
+                   TextWrapping="Wrap"
                    HorizontalAlignment="Right"
                    Margin="0,4,0,0"
-                   Visibility="{Binding HasDuplicateLabels, Converter={StaticResource BoolToVis}}" />
+                   Visibility="{Binding HasValidationWarning, Converter={StaticResource BoolToVis}}" />
 
         <!-- Object Type Filters (centered below both panels) -->
         <GroupBox DockPanel.Dock="Bottom" Header="Compare Object Types"

@@ -74,25 +74,46 @@ namespace SQLParity.Vsix.Helpers
             _adviseSolution = Package.GetGlobalService(typeof(SVsSolution)) as IVsSolution;
             if (_adviseSolution == null) return;
 
-            _listener = new SolutionEventsListener(() => SolutionStateChanged?.Invoke(null, EventArgs.Empty));
+            _listener = new SolutionEventsListener(label =>
+            {
+                System.Diagnostics.Debug.WriteLine("SQLParity: SolutionStateChanged firing (trigger=" + label + ")");
+                SolutionStateChanged?.Invoke(null, EventArgs.Empty);
+            });
             _adviseSolution.AdviseSolutionEvents(_listener, out _adviseCookie);
         }
 
         /// <summary>
-        /// Bare-bones IVsSolutionEvents implementation. Only the open/close
-        /// callbacks do real work; everything else is a no-op so we can
-        /// satisfy the interface without dragging in unrelated state.
+        /// IVsSolutionEvents implementation that also implements
+        /// <see cref="IVsSolutionEvents7"/> so SSMS 22's "Open Folder" mode
+        /// (which fires Folder-specific events instead of OnAfterOpenSolution)
+        /// is delivered to us. The shell QIs the listener for the higher-
+        /// numbered interfaces; if we don't implement them, the events are
+        /// silently dropped — that was the original "radio stays disabled
+        /// until SQLParity window is reopened" bug.
+        ///
+        /// Each event-firing method writes a Debug.WriteLine so the user can
+        /// capture output via DebugView.exe to confirm which event SSMS
+        /// actually raises for Open Folder vs Open Solution.
         /// </summary>
-        private sealed class SolutionEventsListener : IVsSolutionEvents
+        private sealed class SolutionEventsListener : IVsSolutionEvents, IVsSolutionEvents7
         {
-            private readonly Action _onChange;
-            public SolutionEventsListener(Action onChange) { _onChange = onChange; }
+            private readonly Action<string> _onChange;
+            public SolutionEventsListener(Action<string> onChange) { _onChange = onChange; }
 
+            // IVsSolutionEvents — fires for traditional .ssmssln solutions.
             public int OnAfterOpenSolution(object pUnkReserved, int fNewSolution)
-            { _onChange(); return VSConstants.S_OK; }
+            {
+                System.Diagnostics.Debug.WriteLine("SQLParity: IVsSolutionEvents.OnAfterOpenSolution");
+                _onChange("OnAfterOpenSolution");
+                return VSConstants.S_OK;
+            }
 
             public int OnAfterCloseSolution(object pUnkReserved)
-            { _onChange(); return VSConstants.S_OK; }
+            {
+                System.Diagnostics.Debug.WriteLine("SQLParity: IVsSolutionEvents.OnAfterCloseSolution");
+                _onChange("OnAfterCloseSolution");
+                return VSConstants.S_OK;
+            }
 
             public int OnAfterCloseProject(IVsHierarchy pHierarchy, int fRemoved) => VSConstants.S_OK;
             public int OnAfterLoadProject(IVsHierarchy pStubHierarchy, IVsHierarchy pRealHierarchy) => VSConstants.S_OK;
@@ -103,6 +124,31 @@ namespace SQLParity.Vsix.Helpers
             public int OnQueryCloseProject(IVsHierarchy pHierarchy, int fRemoving, ref int pfCancel) => VSConstants.S_OK;
             public int OnQueryCloseSolution(object pUnkReserved, ref int pfCancel) => VSConstants.S_OK;
             public int OnQueryUnloadProject(IVsHierarchy pRealHierarchy, ref int pfCancel) => VSConstants.S_OK;
+
+            // IVsSolutionEvents7 — fires for "Open Folder" workspaces in VS / SSMS 17+.
+            public void OnAfterOpenFolder(string folderPath)
+            {
+                System.Diagnostics.Debug.WriteLine("SQLParity: IVsSolutionEvents7.OnAfterOpenFolder path=" + folderPath);
+                _onChange("OnAfterOpenFolder");
+            }
+
+            public void OnBeforeCloseFolder(string folderPath)
+            {
+                System.Diagnostics.Debug.WriteLine("SQLParity: IVsSolutionEvents7.OnBeforeCloseFolder path=" + folderPath);
+            }
+
+            public void OnQueryCloseFolder(string folderPath, ref int pfCancel)
+            {
+                // No-op: just observe; don't veto the close.
+            }
+
+            public void OnAfterCloseFolder(string folderPath)
+            {
+                System.Diagnostics.Debug.WriteLine("SQLParity: IVsSolutionEvents7.OnAfterCloseFolder path=" + folderPath);
+                _onChange("OnAfterCloseFolder");
+            }
+
+            public void OnAfterLoadAllDeferredProjects() { /* no-op */ }
         }
     }
 }

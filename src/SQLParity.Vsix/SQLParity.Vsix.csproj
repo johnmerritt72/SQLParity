@@ -34,6 +34,13 @@
     <IncludeDebugSymbolsInLocalVSIXDeployment>true</IncludeDebugSymbolsInLocalVSIXDeployment>
     <CopyBuildOutputToOutputDirectory>true</CopyBuildOutputToOutputDirectory>
     <CopyOutputSymbolsToOutputDirectory>true</CopyOutputSymbolsToOutputDirectory>
+    <!-- Suppress the VSSDK's automatic deploy to the VS 2022 Experimental hive
+         (17.0_682db75aExp). SSMS doesn't read that hive — we have our own
+         DeployToSsms22 target below that copies to the SSMS 22 Exp hive
+         (22.0_919b8d66Exp) where /rootsuffix Exp actually looks. Without
+         this, every build also writes to VS 17 Exp, which then confuses
+         VSIXInstaller into reporting the extension is "already installed". -->
+    <DeployExtension>false</DeployExtension>
     <StartAction>Program</StartAction>
     <StartProgram>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\SSMS.exe</StartProgram>
     <StartArguments>/rootsuffix Exp</StartArguments>
@@ -184,8 +191,13 @@
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Import Project="$(VSToolsPath)\VSSDK\Microsoft.VsSDK.targets" Condition="'$(VSToolsPath)' != ''" />
-  <!-- Deploy to SSMS 22's actual experimental hive (Microsoft/SSMS/, not Microsoft/VisualStudio/) -->
-  <Target Name="DeployToSsms22" AfterTargets="DeployVsixExtensionFiles">
+  <!-- Deploy to SSMS 22's actual experimental hive (Microsoft/SSMS/, not
+       Microsoft/VisualStudio/). Hooked AfterTargets="Build" rather than
+       AfterTargets="DeployVsixExtensionFiles" because we set
+       <DeployExtension>false</DeployExtension> above to suppress the VSSDK's
+       deploy to the VS 2022 Exp hive — that hive isn't read by SSMS, but its
+       presence confused VSIXInstaller into reporting "already installed". -->
+  <Target Name="DeployToSsms22" AfterTargets="Build">
     <PropertyGroup>
       <Ssms22ExtPath>$(LocalAppData)\Microsoft\SSMS\22.0_919b8d66Exp\Extensions\SQLParity\$(SQLParityVersion)\</Ssms22ExtPath>
       <VsixIdentity>SQLParity.214618a2-e13a-49d0-a25a-ac0f2ae6e811</VsixIdentity>

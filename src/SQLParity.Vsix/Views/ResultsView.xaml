@@ -44,7 +44,9 @@
                                 <TextBlock Text="{Binding Direction.LabelB}" />
                             </StackPanel>
                         </Button>
-                        <Button Command="{Binding Direction.SetBtoACommand}" Padding="8,4" Margin="4,0">
+                        <Button Command="{Binding Direction.SetBtoACommand}" Padding="8,4" Margin="4,0"
+                                ToolTip="{Binding Direction.BtoAToolTip}"
+                                ToolTipService.ShowOnDisabled="True">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="{Binding Direction.LabelB}" />
                                 <TextBlock Text=" &#x2192; " />
@@ -66,7 +68,9 @@
                         </StackPanel.Style>
                         <TextBlock Text="{Binding Direction.ArrowText}" VerticalAlignment="Center" FontWeight="SemiBold"
                                    Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" Margin="0,0,8,0" />
-                        <Button Content="Flip" Command="{Binding Direction.FlipCommand}" Padding="8,4" />
+                        <Button Content="Flip" Command="{Binding Direction.FlipCommand}" Padding="8,4"
+                                ToolTip="{Binding Direction.BtoAToolTip}"
+                                ToolTipService.ShowOnDisabled="True" />
                     </StackPanel>
                 </StackPanel>
 

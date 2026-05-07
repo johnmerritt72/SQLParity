@@ -550,6 +550,17 @@ namespace SQLParity.Vsix.ViewModels
                 _defaultDbNameA = string.Empty;
 
             Direction.PopulateFrom(sideA, sideB);
+
+            // Block B→A entirely when Side B has no objects — the comparison
+            // would express every Side A object as a "drop on apply" and the
+            // user has no legitimate reason to seed an empty DB by dropping
+            // a populated one.
+            Direction.IsBtoADangerous = !result.SideB.HasObjects;
+            Direction.BtoADangerExplanation = Direction.IsBtoADangerous
+                ? "Side B has no objects — applying B → A would drop everything on Side A. " +
+                  "Pick a non-empty folder or database before reversing the direction."
+                : string.Empty;
+
             Direction.Direction = SyncDirection.AtoB; // Default to A→B
 
             // Build tree in a temporary list to avoid per-item UI updates

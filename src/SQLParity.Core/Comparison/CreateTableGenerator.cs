@@ -31,8 +31,7 @@ public static class CreateTableGenerator
         {
             sb.Append('\t').Append(FormatColumn(orderedColumns[i]));
             bool isLastColumn = i == orderedColumns.Count - 1;
-            bool hasTableLevelConstraints = false; // Filled in by later tasks
-            if (!isLastColumn || hasTableLevelConstraints)
+            if (!isLastColumn)
                 sb.Append(',');
             sb.AppendLine();
         }

@@ -23,9 +23,11 @@ public class CreateTableGeneratorTests
         bool isPersisted = false,
         string? collation = null,
         DefaultConstraintModel? defaultConstraint = null,
-        int ordinal = 0) => new()
+        int ordinal = 0,
+        string schema = "dbo",
+        string table = "T") => new()
     {
-        Id = SchemaQualifiedName.Child("dbo", "T", name),
+        Id = SchemaQualifiedName.Child(schema, table, name),
         Name = name,
         DataType = dataType,
         MaxLength = maxLen,

@@ -53,6 +53,10 @@ public static class CreateTableGenerator
             sb.Append(" COLLATE ").Append(col.Collation);
 
         sb.Append(col.IsNullable ? " NULL" : " NOT NULL");
+
+        if (col.DefaultConstraint != null)
+            sb.Append(" CONSTRAINT [").Append(col.DefaultConstraint.Name).Append("] DEFAULT ").Append(col.DefaultConstraint.Definition);
+
         return sb.ToString();
     }
 

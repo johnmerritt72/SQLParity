@@ -199,4 +199,31 @@ public class CreateTableGeneratorTests
         var ddl = CreateTableGenerator.Generate(table);
         Assert.DoesNotContain("COLLATE", ddl);
     }
+
+    [Fact]
+    public void DefaultConstraint_EmittedAfterNullSpec()
+    {
+        var def = new DefaultConstraintModel { Name = "DF_T_CreatedAt", Definition = "(getdate())" };
+        var table = MakeTable("dbo", "T", new[]
+        {
+            Col("CreatedAt", "datetime", defaultConstraint: def),
+        });
+        var ddl = CreateTableGenerator.Generate(table);
+        Assert.Contains("[CreatedAt] [datetime] NOT NULL CONSTRAINT [DF_T_CreatedAt] DEFAULT (getdate())", ddl);
+    }
+
+    [Fact]
+    public void DefaultConstraint_DefinitionAlreadyParenthesized_NotDoubleWrapped()
+    {
+        // sys.default_constraints.definition typically arrives already wrapped in (),
+        // e.g. "((0))" for "DEFAULT 0". Don't add another layer.
+        var def = new DefaultConstraintModel { Name = "DF_T_Count", Definition = "((0))" };
+        var table = MakeTable("dbo", "T", new[]
+        {
+            Col("Count", "int", defaultConstraint: def),
+        });
+        var ddl = CreateTableGenerator.Generate(table);
+        Assert.Contains("CONSTRAINT [DF_T_Count] DEFAULT ((0))", ddl);
+        Assert.DoesNotContain("DEFAULT (((0)))", ddl);
+    }
 }

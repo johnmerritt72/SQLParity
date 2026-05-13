@@ -1,7 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
-using System.Windows.Input;
 using System.Windows.Media;
 using SQLParity.Vsix.Helpers;
 using SQLParity.Vsix.ViewModels;
@@ -99,33 +98,12 @@ namespace SQLParity.Vsix.Views
             if (e.PropertyName == nameof(ResultsViewModel.SelectedTreeItem))
             {
                 UpdateDetailVisibility();
-                LoadAndShowDdl();
+                UpdateDdlDiff();
             }
 
             if (e.PropertyName == nameof(ResultsViewModel.SelectedDdlA)
                 || e.PropertyName == nameof(ResultsViewModel.SelectedDdlB))
                 UpdateDdlDiff();
-        }
-
-        private async void LoadAndShowDdl()
-        {
-            var vm = DataContext as ResultsViewModel;
-            if (vm == null) return;
-
-            // Show whatever DDL is already cached (instant for non-tables)
-            UpdateDdlDiff();
-
-            // Kick off async load for any missing table DDL
-            var prevCursor = Mouse.OverrideCursor;
-            try
-            {
-                Mouse.OverrideCursor = System.Windows.Input.Cursors.Wait;
-                await vm.LoadDdlAsync();
-            }
-            finally
-            {
-                Mouse.OverrideCursor = prevCursor;
-            }
         }
 
         private void Direction_PropertyChanged(object sender, System.ComponentModel.PropertyChangedEventArgs e)

@@ -364,23 +364,6 @@
                                          HorizontalScrollBarVisibility="Auto" BorderThickness="0" />
                         </Border>
 
-                        <!-- Loading overlay for DDL panels -->
-                        <Border Grid.Row="0" Grid.RowSpan="2" Grid.ColumnSpan="2"
-                                Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}" Opacity="0.8">
-                            <Border.Style>
-                                <Style TargetType="Border">
-                                    <Setter Property="Visibility" Value="Collapsed" />
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsLoadingDdl}" Value="True">
-                                            <Setter Property="Visibility" Value="Visible" />
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Border.Style>
-                            <TextBlock Text="Loading DDL..." FontStyle="Italic"
-                                       HorizontalAlignment="Center" VerticalAlignment="Center"
-                                       Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
-                        </Border>
                     </Grid>
                 </Grid>
 

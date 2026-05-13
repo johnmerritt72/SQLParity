@@ -515,48 +515,6 @@ namespace SQLParity.Vsix.ViewModels
                     DestinationLabel = destination.Label,
                 };
 
-                // Pre-load DDL for any selected tables whose DDL wasn't loaded
-                // yet (tables use lazy-load; if the user didn't view them, their
-                // DdlSideA is empty and the script would be missing CREATE TABLE).
-                var tablesNeedingDdl = selectedChanges
-                    .Where(c => c.ObjectType == ObjectType.Table
-                        && c.Status == ChangeStatus.New
-                        && string.IsNullOrEmpty(c.DdlSideA))
-                    .ToList();
-
-                if (tablesNeedingDdl.Count > 0)
-                {
-                    ProgressText = $"Loading DDL for {tablesNeedingDdl.Count} tables...";
-                    ProgressValue = 0;
-                    ProgressMaximum = tablesNeedingDdl.Count;
-
-                    var sourceConnStr = source.BuildConnectionString();
-                    var sourceDbName = source.DatabaseName;
-                    var total = tablesNeedingDdl.Count;
-
-                    var ddlProgress = new Progress<(int completed, string current)>(p =>
-                    {
-                        ProgressValue = p.completed;
-                        ProgressText = $"Loading DDL... {p.completed}/{total}  —  {p.current}";
-                    });
-
-                    await Task.Run(() =>
-                    {
-                        var reader = new SQLParity.Core.SchemaReader(sourceConnStr, sourceDbName);
-                        int loaded = 0;
-                        foreach (var change in tablesNeedingDdl)
-                        {
-                            try
-                            {
-                                change.DdlSideA = reader.ScriptTable(change.Id.Schema, change.Id.Name);
-                            }
-                            catch { }
-                            loaded++;
-                            ((IProgress<(int, string)>)ddlProgress).Report((loaded, change.Id.ToString()));
-                        }
-                    });
-                }
-
                 ProgressText = $"Ordering {selectedChanges.Count} changes by dependency...";
                 ProgressValue = 0;
                 ProgressMaximum = 0; // indeterminate look
@@ -709,46 +667,6 @@ namespace SQLParity.Vsix.ViewModels
                 DestinationLabel = destination.Label,
             };
 
-            // Pre-load DDL for any selected tables whose DDL wasn't loaded yet
-            var tablesNeedingDdl = selectedChanges
-                .Where(c => c.ObjectType == ObjectType.Table
-                    && c.Status == ChangeStatus.New
-                    && string.IsNullOrEmpty(c.DdlSideA))
-                .ToList();
-
-            if (tablesNeedingDdl.Count > 0)
-            {
-                ProgressText = $"Loading DDL for {tablesNeedingDdl.Count} tables...";
-                ProgressValue = 0;
-                ProgressMaximum = tablesNeedingDdl.Count;
-
-                var sourceConnStr = source.BuildConnectionString();
-                var sourceDbName = source.DatabaseName;
-                var totalDdl = tablesNeedingDdl.Count;
-
-                var ddlProgress = new Progress<(int completed, string current)>(p =>
-                {
-                    ProgressValue = p.completed;
-                    ProgressText = $"Loading DDL... {p.completed}/{totalDdl}  —  {p.current}";
-                });
-
-                await Task.Run(() =>
-                {
-                    var reader = new SQLParity.Core.SchemaReader(sourceConnStr, sourceDbName);
-                    int loaded = 0;
-                    foreach (var change in tablesNeedingDdl)
-                    {
-                        try
-                        {
-                            change.DdlSideA = reader.ScriptTable(change.Id.Schema, change.Id.Name);
-                        }
-                        catch { }
-                        loaded++;
-                        ((IProgress<(int, string)>)ddlProgress).Report((loaded, change.Id.ToString()));
-                    }
-                });
-            }
-
             ProgressText = "Ordering changes by dependency...";
             ProgressValue = 0;
             ProgressMaximum = 0;
@@ -854,44 +772,6 @@ namespace SQLParity.Vsix.ViewModels
                     // shouldn't happen in practice. Skip with a counted "Skipped" entry.
                     totalSkipped += changesForDb.Count;
                     continue;
-                }
-
-                // Pre-load DDL for any New tables in this group — query the
-                // matching source DB (not Side A's default DB) since each group
-                // corresponds to one live database.
-                var tablesNeedingDdl = changesForDb
-                    .Where(c => c.ObjectType == ObjectType.Table
-                        && c.Status == ChangeStatus.New
-                        && string.IsNullOrEmpty(c.DdlSideA))
-                    .ToList();
-
-                if (tablesNeedingDdl.Count > 0)
-                {
-                    ProgressText = $"Loading DDL for {tablesNeedingDdl.Count} table(s) in [{dbName}]…";
-                    ProgressValue = 0;
-                    ProgressMaximum = tablesNeedingDdl.Count;
-
-                    var connStr = source.BuildConnectionString(dbName);
-                    int totalDdl = tablesNeedingDdl.Count;
-
-                    var ddlProgress = new Progress<(int completed, string current)>(p =>
-                    {
-                        ProgressValue = p.completed;
-                        ProgressText = $"Loading DDL [{dbName}]… {p.completed}/{totalDdl} — {p.current}";
-                    });
-
-                    await Task.Run(() =>
-                    {
-                        var reader = new SQLParity.Core.SchemaReader(connStr, dbName);
-                        int loaded = 0;
-                        foreach (var change in tablesNeedingDdl)
-                        {
-                            try { change.DdlSideA = reader.ScriptTable(change.Id.Schema, change.Id.Name); }
-                            catch { /* per-table failures surface as empty CREATE blocks */ }
-                            loaded++;
-                            ((IProgress<(int, string)>)ddlProgress).Report((loaded, change.Id.ToString()));
-                        }
-                    });
                 }
 
                 ProgressText = $"Writing [{dbName}] ({dbIndex} of {byDb.Count}) — {changesForDb.Count} change(s)…";

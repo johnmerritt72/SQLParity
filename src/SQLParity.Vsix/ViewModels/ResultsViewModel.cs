@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
-using System.Threading.Tasks;
 using System.Windows.Input;
 using System.Windows.Threading;
 using SQLParity.Core.Comparison;
@@ -19,8 +18,6 @@ namespace SQLParity.Vsix.ViewModels
         private DispatcherTimer _toastTimer;
         private ObservableCollection<TableTreeNode> _tableTreeItems;
         private bool _isTableSelected;
-        private bool _isLoadingDdl;
-        private int _ddlLoadGeneration;
         private string _filterText = string.Empty;
         private string _defaultDbNameA = string.Empty;
 
@@ -311,12 +308,6 @@ namespace SQLParity.Vsix.ViewModels
             set => SetProperty(ref _isTableSelected, value);
         }
 
-        public bool IsLoadingDdl
-        {
-            get => _isLoadingDdl;
-            set => SetProperty(ref _isLoadingDdl, value);
-        }
-
         public ChangeTreeItemViewModel SelectedTreeItem
         {
             get => _selectedTreeItem;
@@ -395,83 +386,6 @@ namespace SQLParity.Vsix.ViewModels
             }
         }
 
-        /// <summary>
-        /// Loads table DDL for both sides on a background thread.
-        /// Uses a generation counter to discard stale results when the user
-        /// clicks a different item before loading completes.
-        /// </summary>
-        public async Task LoadDdlAsync()
-        {
-            var change = SelectedChange;
-            if (change == null) return;
-
-            bool needA = change.ObjectType == ObjectType.Table
-                && string.IsNullOrEmpty(change.DdlSideA)
-                && change.Status != ChangeStatus.Dropped
-                && !string.IsNullOrEmpty(_connStrA);
-
-            bool needB = change.ObjectType == ObjectType.Table
-                && string.IsNullOrEmpty(change.DdlSideB)
-                && change.Status != ChangeStatus.New
-                && !string.IsNullOrEmpty(_connStrB);
-
-            if (!needA && !needB) return;
-
-            int generation = ++_ddlLoadGeneration;
-            IsLoadingDdl = true;
-
-            try
-            {
-                // Capture locals for the background work
-                var connA = _connStrA;
-                var connB = _connStrB;
-                var dbA = _dbNameA;
-                var dbB = _dbNameB;
-                var schema = change.Id.Schema;
-                var name = change.Id.Name;
-
-                string ddlA = null;
-                string ddlB = null;
-
-                await Task.Run(() =>
-                {
-                    if (needA)
-                    {
-                        try
-                        {
-                            var reader = new SQLParity.Core.SchemaReader(connA, dbA);
-                            ddlA = reader.ScriptTable(schema, name);
-                        }
-                        catch { }
-                    }
-
-                    if (needB)
-                    {
-                        try
-                        {
-                            var reader = new SQLParity.Core.SchemaReader(connB, dbB);
-                            ddlB = reader.ScriptTable(schema, name);
-                        }
-                        catch { }
-                    }
-                });
-
-                // Discard if the user selected a different item while we were loading
-                if (generation != _ddlLoadGeneration) return;
-
-                if (ddlA != null) change.DdlSideA = ddlA;
-                if (ddlB != null) change.DdlSideB = ddlB;
-
-                OnPropertyChanged(nameof(SelectedDdlA));
-                OnPropertyChanged(nameof(SelectedDdlB));
-            }
-            finally
-            {
-                if (generation == _ddlLoadGeneration)
-                    IsLoadingDdl = false;
-            }
-        }
-
         public string SelectedObjectName =>
             SelectedChange != null ? SelectedChange.Id.ToString() : string.Empty;
 
@@ -515,19 +429,9 @@ namespace SQLParity.Vsix.ViewModels
             }
         }
 
-        // Connection info stored for lazy DDL scripting
-        private string _connStrA;
-        private string _connStrB;
-        private string _dbNameA;
-        private string _dbNameB;
-
         public void Populate(ComparisonResult result, ConnectionSideViewModel sideA, ConnectionSideViewModel sideB)
         {
             _comparisonResult = result;
-            _connStrA = sideA.BuildConnectionString();
-            _connStrB = sideB.BuildConnectionString();
-            _dbNameA = sideA.DatabaseName;
-            _dbNameB = sideB.DatabaseName;
 
             // Determine the default DB-name suffix for Side A's header before
             // any change is selected. Three cases:

@@ -24,7 +24,8 @@ public static class SchemaComparator
         bool ignoreWhitespaceInStoredProcedures = false,
         bool ignoreOptionalBrackets = false,
         bool limitToFolderObjects = false,
-        bool sideBIsFolder = false)
+        bool sideBIsFolder = false,
+        IReadOnlyDictionary<SchemaQualifiedName, string?>? sideBFileNames = null)
     {
         options = options ?? SchemaReadOptions.All;
         var changes = new List<Change>();
@@ -208,12 +209,81 @@ public static class SchemaComparator
             }
         }
 
+        if (sideBFileNames != null)
+            PopulateRenameCandidates(changes, sideBFileNames);
+
         return new ComparisonResult
         {
             SideA = sideA,
             SideB = sideB,
             Changes = changes,
         };
+    }
+
+    /// <summary>
+    /// Populates Change.RenameCandidateNames on orphan New/Dropped pairs that
+    /// look like typo mismatches: the folder-side DROP's FileName matches the
+    /// DB-side NEW's Id.Name (same schema, same SourceDatabase). Detection is
+    /// opt-in via the sideBFileNames dictionary passed to Compare; live-vs-live
+    /// comparisons pass null and skip this pass.
+    /// </summary>
+    private static void PopulateRenameCandidates(
+        IList<Change> changes,
+        IReadOnlyDictionary<SchemaQualifiedName, string?> sideBFileNames)
+    {
+        // Index orphan NEWs (objects on side A not in side B) by (schema, name) for O(1) lookup.
+        var newOrphansByKey = new Dictionary<(string Schema, string Name), Change>(
+            StringTupleComparer.OrdinalIgnoreCase);
+        foreach (var c in changes)
+        {
+            if (c.Status != ChangeStatus.New) continue;
+            // Only top-level routine-like types; tables don't have a CREATE statement we'd rewrite the same way.
+            if (!IsRoutineLikeType(c.ObjectType)) continue;
+            newOrphansByKey[(c.Id.Schema, c.Id.Name)] = c;
+        }
+
+        foreach (var c in changes)
+        {
+            if (c.Status != ChangeStatus.Dropped) continue;
+            if (!IsRoutineLikeType(c.ObjectType)) continue;
+            if (!sideBFileNames.TryGetValue(c.Id, out var fileName)) continue;
+            if (string.IsNullOrEmpty(fileName)) continue;  // multi-batch file or live-side
+            if (string.Equals(fileName, c.Id.Name, System.StringComparison.OrdinalIgnoreCase)) continue;  // no typo
+
+            var lookupKey = (c.Id.Schema, fileName);
+            if (!newOrphansByKey.TryGetValue(lookupKey, out var matchedNew)) continue;
+
+            // Same SourceDatabase if both have one (multi-DB folder mode).
+            if (!string.Equals(c.SourceDatabase, matchedNew.SourceDatabase, System.StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            c.RenameCandidateNames.Add(matchedNew.Id.Name);
+            matchedNew.RenameCandidateNames.Add(c.Id.Name);
+        }
+    }
+
+    private static bool IsRoutineLikeType(ObjectType t) => t switch
+    {
+        ObjectType.StoredProcedure => true,
+        ObjectType.UserDefinedFunction => true,
+        ObjectType.View => true,
+        ObjectType.Sequence => true,
+        ObjectType.Synonym => true,
+        ObjectType.UserDefinedDataType => true,
+        ObjectType.UserDefinedTableType => true,
+        _ => false,
+    };
+
+    private sealed class StringTupleComparer : IEqualityComparer<(string, string)>
+    {
+        public static readonly StringTupleComparer OrdinalIgnoreCase = new();
+        public bool Equals((string, string) x, (string, string) y)
+            => System.StringComparer.OrdinalIgnoreCase.Equals(x.Item1, y.Item1)
+            && System.StringComparer.OrdinalIgnoreCase.Equals(x.Item2, y.Item2);
+        public int GetHashCode((string, string) obj)
+            => System.HashCode.Combine(
+                System.StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Item1),
+                System.StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Item2));
     }
 
     private static IEnumerable<Change> CompareTables(

@@ -922,10 +922,14 @@ namespace SQLParity.Vsix.ViewModels
                 bool effectiveLimit = limitToFolderObjects && !IsSchemaEmpty(schemaB);
 
                 ProgressText = $"Comparing [{dbName}] ({dbIndex} of {dbTotal})…";
+                var sideBFileNames = folderResult.Context.ObjectToFile.ToDictionary(
+                    kv => kv.Key,
+                    kv => kv.Value.FileName);
                 var perDbResult = await Task.Run(() => SchemaComparator.Compare(
                     schemaA, schemaB, readOptions,
                     ignoreCommentsInSps, ignoreWhitespaceInSps, ignoreOptionalBrackets,
-                    effectiveLimit, sideBIsFolder: true));
+                    effectiveLimit, sideBIsFolder: true,
+                    sideBFileNames: sideBFileNames));
 
                 foreach (var c in perDbResult.Changes)
                 {

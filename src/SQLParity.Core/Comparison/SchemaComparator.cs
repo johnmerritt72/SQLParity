@@ -250,7 +250,7 @@ public static class SchemaComparator
             if (string.IsNullOrEmpty(fileName)) continue;  // multi-batch file or live-side
             if (string.Equals(fileName, c.Id.Name, System.StringComparison.OrdinalIgnoreCase)) continue;  // no typo
 
-            var lookupKey = (c.Id.Schema, fileName);
+            var lookupKey = (c.Id.Schema, fileName!);
             if (!newOrphansByKey.TryGetValue(lookupKey, out var matchedNew)) continue;
 
             // Same SourceDatabase if both have one (multi-DB folder mode).

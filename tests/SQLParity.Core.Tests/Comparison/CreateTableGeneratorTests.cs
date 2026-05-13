@@ -81,4 +81,122 @@ public class CreateTableGeneratorTests
             ")",
             ddl);
     }
+
+    [Fact]
+    public void NullableColumn_EmitsNull()
+    {
+        var table = MakeTable("dbo", "T", new[] { Col("X", "int", nullable: true) });
+        var ddl = CreateTableGenerator.Generate(table);
+        Assert.Contains("[X] [int] NULL", ddl);
+        Assert.DoesNotContain("NOT NULL", ddl);
+    }
+
+    [Theory]
+    [InlineData("varchar", 50, "[varchar](50)")]
+    [InlineData("nvarchar", 100, "[nvarchar](100)")]
+    [InlineData("char", 10, "[char](10)")]
+    [InlineData("nchar", 5, "[nchar](5)")]
+    [InlineData("binary", 16, "[binary](16)")]
+    [InlineData("varbinary", 64, "[varbinary](64)")]
+    [InlineData("varchar", -1, "[varchar](max)")]
+    [InlineData("nvarchar", -1, "[nvarchar](max)")]
+    [InlineData("varbinary", -1, "[varbinary](max)")]
+    public void StringAndBinaryTypes_EmitLength(string dataType, int maxLen, string expected)
+    {
+        var table = MakeTable("dbo", "T", new[] { Col("X", dataType, maxLen: maxLen) });
+        var ddl = CreateTableGenerator.Generate(table);
+        Assert.Contains("[X] " + expected, ddl);
+    }
+
+    [Theory]
+    [InlineData("decimal", 18, 4, "[decimal](18, 4)")]
+    [InlineData("numeric", 10, 2, "[numeric](10, 2)")]
+    public void DecimalNumeric_EmitsPrecisionAndScale(string dataType, int precision, int scale, string expected)
+    {
+        var table = MakeTable("dbo", "T", new[] { Col("X", dataType, precision: precision, scale: scale) });
+        var ddl = CreateTableGenerator.Generate(table);
+        Assert.Contains("[X] " + expected, ddl);
+    }
+
+    [Theory]
+    [InlineData("int")]
+    [InlineData("bigint")]
+    [InlineData("smallint")]
+    [InlineData("tinyint")]
+    [InlineData("bit")]
+    [InlineData("datetime")]
+    [InlineData("smalldatetime")]
+    [InlineData("date")]
+    [InlineData("money")]
+    [InlineData("real")]
+    [InlineData("float")]
+    [InlineData("uniqueidentifier")]
+    [InlineData("xml")]
+    [InlineData("sql_variant")]
+    [InlineData("sysname")]
+    public void TypesWithoutSize_NoParens(string dataType)
+    {
+        var table = MakeTable("dbo", "T", new[] { Col("X", dataType) });
+        var ddl = CreateTableGenerator.Generate(table);
+        Assert.Contains($"[X] [{dataType}] NOT NULL", ddl);
+        Assert.DoesNotContain($"[{dataType}](", ddl);
+    }
+
+    [Theory]
+    [InlineData("datetime2", 7, "[datetime2](7)")]
+    [InlineData("time", 3, "[time](3)")]
+    [InlineData("datetimeoffset", 5, "[datetimeoffset](5)")]
+    public void TemporalTypes_EmitPrecisionOnly(string dataType, int scale, string expected)
+    {
+        // sys.columns stores fractional-second precision in `scale` for these types
+        var table = MakeTable("dbo", "T", new[] { Col("X", dataType, scale: scale) });
+        var ddl = CreateTableGenerator.Generate(table);
+        Assert.Contains("[X] " + expected, ddl);
+    }
+
+    [Fact]
+    public void IdentityColumn_EmitsIdentityClause()
+    {
+        var table = MakeTable("dbo", "T", new[]
+        {
+            Col("Id", "int", isIdentity: true, identitySeed: 1, identityIncrement: 1),
+        });
+        var ddl = CreateTableGenerator.Generate(table);
+        Assert.Contains("[Id] [int] IDENTITY(1,1) NOT NULL", ddl);
+    }
+
+    [Fact]
+    public void IdentityColumn_NonDefaultSeedAndIncrement()
+    {
+        var table = MakeTable("dbo", "T", new[]
+        {
+            Col("Id", "bigint", isIdentity: true, identitySeed: 1000, identityIncrement: 5),
+        });
+        var ddl = CreateTableGenerator.Generate(table);
+        Assert.Contains("[Id] [bigint] IDENTITY(1000,5) NOT NULL", ddl);
+    }
+
+    [Fact]
+    public void StringColumn_WithCollation_EmitsCollate()
+    {
+        var table = MakeTable("dbo", "T", new[]
+        {
+            Col("Name", "nvarchar", maxLen: 100, collation: "SQL_Latin1_General_CP1_CI_AS"),
+        });
+        var ddl = CreateTableGenerator.Generate(table);
+        Assert.Contains("[Name] [nvarchar](100) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL", ddl);
+    }
+
+    [Fact]
+    public void IntColumn_WithCollationSet_DoesNotEmitCollate()
+    {
+        // Defensive: catalog might return a non-null collation on a non-string column;
+        // COLLATE on a non-character type is invalid SQL.
+        var table = MakeTable("dbo", "T", new[]
+        {
+            Col("Id", "int", collation: "SQL_Latin1_General_CP1_CI_AS"),
+        });
+        var ddl = CreateTableGenerator.Generate(table);
+        Assert.DoesNotContain("COLLATE", ddl);
+    }
 }

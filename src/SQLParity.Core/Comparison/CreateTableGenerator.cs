@@ -42,7 +42,40 @@ public static class CreateTableGenerator
 
     private static string FormatColumn(ColumnModel col)
     {
-        // Simplest case: [name] [type] NULL/NOT NULL
-        return $"[{col.Name}] [{col.DataType}] {(col.IsNullable ? "NULL" : "NOT NULL")}";
+        var sb = new StringBuilder();
+        sb.Append('[').Append(col.Name).Append("] ");
+        sb.Append(FormatDataType(col));
+
+        if (col.IsIdentity)
+            sb.Append(" IDENTITY(").Append(col.IdentitySeed).Append(',').Append(col.IdentityIncrement).Append(')');
+
+        if (!string.IsNullOrEmpty(col.Collation) && IsCharacterType(col.DataType))
+            sb.Append(" COLLATE ").Append(col.Collation);
+
+        sb.Append(col.IsNullable ? " NULL" : " NOT NULL");
+        return sb.ToString();
     }
+
+    private static string FormatDataType(ColumnModel col)
+    {
+        string dt = col.DataType.ToLowerInvariant();
+        return dt switch
+        {
+            "varchar" or "nvarchar" or "char" or "nchar" or "binary" or "varbinary"
+                => $"[{dt}]({(col.MaxLength == -1 ? "max" : col.MaxLength.ToString())})",
+            "decimal" or "numeric"
+                => $"[{dt}]({col.Precision}, {col.Scale})",
+            "datetime2" or "time" or "datetimeoffset"
+                => $"[{dt}]({col.Scale})",
+            _ => $"[{dt}]",
+        };
+    }
+
+    private static bool IsCharacterType(string dataType) =>
+        dataType.Equals("varchar", StringComparison.OrdinalIgnoreCase)
+        || dataType.Equals("nvarchar", StringComparison.OrdinalIgnoreCase)
+        || dataType.Equals("char", StringComparison.OrdinalIgnoreCase)
+        || dataType.Equals("nchar", StringComparison.OrdinalIgnoreCase)
+        || dataType.Equals("text", StringComparison.OrdinalIgnoreCase)
+        || dataType.Equals("ntext", StringComparison.OrdinalIgnoreCase);
 }

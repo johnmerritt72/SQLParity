@@ -34,12 +34,13 @@
     <IncludeDebugSymbolsInLocalVSIXDeployment>true</IncludeDebugSymbolsInLocalVSIXDeployment>
     <CopyBuildOutputToOutputDirectory>true</CopyBuildOutputToOutputDirectory>
     <CopyOutputSymbolsToOutputDirectory>true</CopyOutputSymbolsToOutputDirectory>
-    <!-- Suppress the VSSDK's automatic deploy to the VS 2022 Experimental hive
-         (17.0_682db75aExp). SSMS doesn't read that hive — we have our own
-         DeployToSsms22 target below that copies to the SSMS 22 Exp hive
-         (22.0_919b8d66Exp) where /rootsuffix Exp actually looks. Without
-         this, every build also writes to VS 17 Exp, which then confuses
-         VSIXInstaller into reporting the extension is "already installed". -->
+    <!-- Suppress the VSSDK's automatic deploy to the VS 2022 Experimental hive.
+         Testing is done in the regular SSMS instance via VSIXInstaller — never
+         the Exp hive. Leaving auto-deploy on writes to the VS 17 Exp hive
+         (and previously also to an SSMS 22 Exp hive via a removed custom
+         target), which corrupts the product catalog and makes the next
+         VSIXInstaller upgrade fail with "already installed" or "component not
+         in catalog". -->
     <DeployExtension>false</DeployExtension>
     <StartAction>Program</StartAction>
     <StartProgram>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\SSMS.exe</StartProgram>
@@ -191,28 +192,6 @@
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Import Project="$(VSToolsPath)\VSSDK\Microsoft.VsSDK.targets" Condition="'$(VSToolsPath)' != ''" />
-  <!-- Deploy to SSMS 22's actual experimental hive (Microsoft/SSMS/, not
-       Microsoft/VisualStudio/). Hooked AfterTargets="Build" rather than
-       AfterTargets="DeployVsixExtensionFiles" because we set
-       <DeployExtension>false</DeployExtension> above to suppress the VSSDK's
-       deploy to the VS 2022 Exp hive — that hive isn't read by SSMS, but its
-       presence confused VSIXInstaller into reporting "already installed". -->
-  <Target Name="DeployToSsms22" AfterTargets="Build">
-    <PropertyGroup>
-      <Ssms22ExtPath>$(LocalAppData)\Microsoft\SSMS\22.0_919b8d66Exp\Extensions\SQLParity\$(SQLParityVersion)\</Ssms22ExtPath>
-      <VsixIdentity>SQLParity.214618a2-e13a-49d0-a25a-ac0f2ae6e811</VsixIdentity>
-    </PropertyGroup>
-    <MakeDir Directories="$(Ssms22ExtPath)" />
-    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(Ssms22ExtPath)" />
-    <Copy SourceFiles="$(TargetDir)SQLParity.Core.dll" DestinationFolder="$(Ssms22ExtPath)" Condition="Exists('$(TargetDir)SQLParity.Core.dll')" />
-    <Copy SourceFiles="$(IntermediateOutputPath)extension.vsixmanifest" DestinationFolder="$(Ssms22ExtPath)" />
-    <!-- Signal SSMS to rescan for new extensions -->
-    <Touch Files="$(LocalAppData)\Microsoft\SSMS\22.0_919b8d66Exp\Extensions\extensions.configurationchanged" AlwaysCreate="true" />
-    <Copy SourceFiles="$(TargetDir)$(TargetName).pkgdef" DestinationFolder="$(Ssms22ExtPath)" Condition="Exists('$(TargetDir)$(TargetName).pkgdef')" />
-    <WriteLinesToFile File="$(Ssms22ExtPath)catalog.json" Overwrite="true" Lines="{&quot;manifestVersion&quot;:&quot;1.1&quot;,&quot;info&quot;:{&quot;id&quot;:&quot;$(VsixIdentity)%2Cversion=$(SQLParityVersion)&quot;,&quot;manifestType&quot;:&quot;Extension&quot;},&quot;packages&quot;:[{&quot;id&quot;:&quot;Component.$(VsixIdentity)&quot;,&quot;version&quot;:&quot;$(SQLParityVersion)&quot;,&quot;type&quot;:&quot;Component&quot;,&quot;extension&quot;:true,&quot;dependencies&quot;:{&quot;$(VsixIdentity)&quot;:&quot;$(SQLParityVersion)&quot;,&quot;Microsoft.VisualStudio.Component.CoreEditor&quot;:&quot;[17.0%2C19.0)&quot;},&quot;localizedResources&quot;:[{&quot;language&quot;:&quot;en-US&quot;,&quot;title&quot;:&quot;SQLParity&quot;,&quot;description&quot;:&quot;Schema comparison and sync for SQL Server.&quot;}]},{&quot;id&quot;:&quot;$(VsixIdentity)&quot;,&quot;version&quot;:&quot;$(SQLParityVersion)&quot;,&quot;type&quot;:&quot;Vsix&quot;,&quot;vsixId&quot;:&quot;$(VsixIdentity)&quot;,&quot;extensionDir&quot;:&quot;[installdir]&quot;,&quot;installSizes&quot;:{&quot;targetDrive&quot;:0}}]}" />
-    <WriteLinesToFile File="$(Ssms22ExtPath)manifest.json" Overwrite="true" Lines="{&quot;id&quot;:&quot;$(VsixIdentity)&quot;,&quot;version&quot;:&quot;$(SQLParityVersion)&quot;,&quot;type&quot;:&quot;Vsix&quot;,&quot;vsixId&quot;:&quot;$(VsixIdentity)&quot;,&quot;extensionDir&quot;:&quot;[installdir]&quot;,&quot;files&quot;:[{&quot;fileName&quot;:&quot;/extension.vsixmanifest&quot;,&quot;sha256&quot;:null},{&quot;fileName&quot;:&quot;/SQLParity.Vsix.dll&quot;,&quot;sha256&quot;:null},{&quot;fileName&quot;:&quot;/SQLParity.Core.dll&quot;,&quot;sha256&quot;:null},{&quot;fileName&quot;:&quot;/SQLParity.Vsix.pkgdef&quot;,&quot;sha256&quot;:null}],&quot;installSizes&quot;:{&quot;targetDrive&quot;:0},&quot;dependencies&quot;:{&quot;Microsoft.VisualStudio.Component.CoreEditor&quot;:&quot;[17.0%2C19.0)&quot;}}" />
-    <Message Text="Deployed SQLParity to SSMS 22 experimental hive: $(Ssms22ExtPath)" Importance="high" />
-  </Target>
   <!-- Generate VersionInfo.g.cs from $(SQLParityVersion). Emits both the
        VersionInfo.Version constant (shown on the Options page) and the
        [assembly: AssemblyVersion]/[AssemblyFileVersion] attributes, so they

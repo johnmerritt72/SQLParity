@@ -169,11 +169,50 @@ public static class ScriptGenerator
         {
             if (change.ObjectType == ObjectType.Table && change.ColumnChanges.Count > 0)
                 return AlterTableGenerator.GenerateForModifiedTable(change.Id.Schema, change.Id.Name, change.ColumnChanges);
-            return ConvertToCreateOrAlter(change.DdlSideA ?? string.Empty, change.ObjectType);
+
+            // For routine-like objects (procs, views, functions), apply from SideB (the file/source)
+            // so the file's body is what gets deployed. When PairedFromName is set, rewrite the
+            // CREATE name token so the DB's correct name is used (not the file's typo'd name).
+            var routineDdl = RewriteCreateNameIfPaired(change, change.DdlSideB ?? string.Empty);
+            return ConvertToCreateOrAlter(routineDdl, change.ObjectType);
         }
 
         // Dropped — generate a DROP statement
         return BuildDropStatement(change);
+    }
+
+    /// <summary>
+    /// When a Change has PairedFromName set, rewrite the CREATE [OR ALTER]
+    /// &lt;type&gt; [&lt;schema&gt;.]&lt;oldname&gt; token in the file's DDL to use
+    /// change.Id.Name (the DB's correct name). Only the header token is
+    /// rewritten; the rest of the body is left untouched so the user can spot
+    /// any in-body references that also need fixing.
+    /// </summary>
+    private static string RewriteCreateNameIfPaired(Change change, string ddl)
+    {
+        if (string.IsNullOrEmpty(change.PairedFromName) || string.IsNullOrEmpty(ddl))
+            return ddl;
+
+        // Regex anchored on CREATE [OR ALTER] <type-keyword> [<schema>.]<oldname>.
+        // Allows brackets, whitespace, and case-insensitive object-type keyword.
+        // Only matches the first occurrence (the header).
+        string oldName = System.Text.RegularExpressions.Regex.Escape(change.PairedFromName);
+        var pattern = @"(?im)(\bCREATE\s+(?:OR\s+ALTER\s+)?(?:PROC|PROCEDURE|VIEW|FUNCTION|SEQUENCE|SYNONYM|TYPE)\s+(?:\[?[A-Za-z_][A-Za-z0-9_]*\]?\s*\.\s*)?)\[?" + oldName + @"\]?";
+        var rx = new System.Text.RegularExpressions.Regex(pattern);
+        var match = rx.Match(ddl);
+        if (!match.Success)
+        {
+            // Defensive: couldn't find the header token. Emit a warning comment
+            // and pass through the original DDL so the user sees both.
+            return "-- WARNING: paired typo-rename — could not auto-rewrite CREATE name. Fix the .sql file's CREATE statement before applying."
+                + System.Environment.NewLine + ddl;
+        }
+
+        // Replace only the matched section: prefix (capture 1) + correct name.
+        // Preserve the original bracket style from the prefix captured in group 1;
+        // the name itself is emitted without extra brackets so "dbo.Foo" stays as-is.
+        string replacement = match.Groups[1].Value + change.Id.Name;
+        return ddl.Substring(0, match.Index) + replacement + ddl.Substring(match.Index + match.Length);
     }
 
     /// <summary>

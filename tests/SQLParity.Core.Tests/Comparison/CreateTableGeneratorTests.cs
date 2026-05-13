@@ -347,4 +347,53 @@ public class CreateTableGeneratorTests
         // The last column ("Id") must end with "," because a PK constraint follows
         Assert.Contains("[Id] [int] NOT NULL," + Environment.NewLine, ddl);
     }
+
+    private static CheckConstraintModel Check(string name, string definition) => new()
+    {
+        Id = SchemaQualifiedName.Child("dbo", "T", name),
+        Name = name,
+        Definition = definition,
+        IsEnabled = true,
+        Ddl = string.Empty,
+    };
+
+    [Fact]
+    public void SingleCheckConstraint_EmittedAfterColumns()
+    {
+        var table = MakeTable("dbo", "T",
+            columns: new[] { Col("Value", "int") },
+            checks: new[] { Check("CK_T_Value", "([Value]>=(0))") });
+        var ddl = CreateTableGenerator.Generate(table);
+        Assert.Contains("[Value] [int] NOT NULL,", ddl);
+        Assert.Contains("CONSTRAINT [CK_T_Value] CHECK ([Value]>=(0))", ddl);
+    }
+
+    [Fact]
+    public void MultipleCheckConstraints_EmittedInOrderWithCommas()
+    {
+        var table = MakeTable("dbo", "T",
+            columns: new[] { Col("A", "int", ordinal: 0), Col("B", "int", ordinal: 1) },
+            checks: new[]
+            {
+                Check("CK_T_A", "([A]>(0))"),
+                Check("CK_T_B", "([B]<>(0))"),
+            });
+        var ddl = CreateTableGenerator.Generate(table);
+        Assert.Contains("CONSTRAINT [CK_T_A] CHECK ([A]>(0))," + Environment.NewLine, ddl);
+        Assert.Contains("CONSTRAINT [CK_T_B] CHECK ([B]<>(0))", ddl);
+        // Last constraint has no trailing comma
+        Assert.DoesNotContain("CHECK ([B]<>(0))," + Environment.NewLine, ddl);
+    }
+
+    [Fact]
+    public void PrimaryKeyAndCheckCoexist_AllSeparatedByCommas()
+    {
+        var table = MakeTable("dbo", "T",
+            columns: new[] { Col("Id", "int") },
+            indexes: new[] { PrimaryKey("PK_T", clustered: true, ("Id", false)) },
+            checks: new[] { Check("CK_T_Id", "([Id]>(0))") });
+        var ddl = CreateTableGenerator.Generate(table);
+        Assert.Contains("CONSTRAINT [PK_T] PRIMARY KEY CLUSTERED ([Id] ASC)," + Environment.NewLine, ddl);
+        Assert.Contains("CONSTRAINT [CK_T_Id] CHECK ([Id]>(0))", ddl);
+    }
 }

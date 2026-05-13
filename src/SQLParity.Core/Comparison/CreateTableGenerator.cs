@@ -28,7 +28,15 @@ public static class CreateTableGenerator
 
         var orderedColumns = table.Columns.OrderBy(c => c.OrdinalPosition).ToList();
         var primaryKey = table.Indexes.FirstOrDefault(i => i.IsPrimaryKey);
-        bool hasTableLevelConstraints = primaryKey != null;
+        var checks = table.CheckConstraints.ToList();
+
+        // Build the ordered list of table-level constraint lines so we know
+        // exactly which line is the last (no trailing comma).
+        var constraintLines = new System.Collections.Generic.List<string>();
+        if (primaryKey != null) constraintLines.Add(FormatPrimaryKey(primaryKey));
+        foreach (var c in checks) constraintLines.Add(FormatCheck(c));
+
+        bool hasTableLevelConstraints = constraintLines.Count > 0;
 
         for (int i = 0; i < orderedColumns.Count; i++)
         {
@@ -39,9 +47,11 @@ public static class CreateTableGenerator
             sb.AppendLine();
         }
 
-        if (primaryKey != null)
+        for (int i = 0; i < constraintLines.Count; i++)
         {
-            sb.Append('\t').Append(FormatPrimaryKey(primaryKey));
+            sb.Append('\t').Append(constraintLines[i]);
+            if (i < constraintLines.Count - 1)
+                sb.Append(',');
             sb.AppendLine();
         }
 
@@ -115,4 +125,7 @@ public static class CreateTableGenerator
         sb.Append(')');
         return sb.ToString();
     }
+
+    private static string FormatCheck(CheckConstraintModel check) =>
+        $"CONSTRAINT [{check.Name}] CHECK {check.Definition}";
 }

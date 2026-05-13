@@ -210,11 +210,13 @@ namespace SQLParity.Vsix.Views
         private static string? ExtractScriptError(string ddl)
         {
             if (string.IsNullOrEmpty(ddl)) return null;
-            const string sentinel = "-- Could not script ";
-            if (!ddl.StartsWith(sentinel, System.StringComparison.Ordinal)) return null;
+            const string sentinel = "-- ";
+            const string prefix = "-- Could not script ";
+            if (!ddl.StartsWith(prefix, System.StringComparison.Ordinal)) return null;
 
             int newline = ddl.IndexOf('\n');
-            return newline < 0 ? ddl : ddl.Substring(0, newline).TrimEnd('\r');
+            var firstLine = newline < 0 ? ddl : ddl.Substring(0, newline).TrimEnd('\r');
+            return firstLine.Substring(sentinel.Length);
         }
 
         private static string BuildBannerText(string? errorA, string? errorB, string? labelA, string? labelB)

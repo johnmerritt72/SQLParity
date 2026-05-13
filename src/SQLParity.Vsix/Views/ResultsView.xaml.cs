@@ -161,12 +161,12 @@ namespace SQLParity.Vsix.Views
             var vm = DataContext as ResultsViewModel;
             if (vm?.SelectedChange == null)
             {
+                ErrorBannerBorder.Visibility = Visibility.Collapsed;
                 DdlBoxA.Document = new FlowDocument();
                 DdlBoxB.Document = new FlowDocument();
                 return;
             }
 
-            // Read line number setting from options
             try
             {
                 var opts = Options.OptionsHelper.GetOptions();
@@ -175,16 +175,83 @@ namespace SQLParity.Vsix.Views
             }
             catch { }
 
-            // Use SelectedDdlA/B which lazy-loads table DDL on demand
-            SimpleDiffHighlighter.CreateAlignedDiffDocuments(
-                vm.SelectedDdlA,
-                vm.SelectedDdlB,
-                out var docA, out var docB);
+            var ddlA = vm.SelectedDdlA ?? string.Empty;
+            var ddlB = vm.SelectedDdlB ?? string.Empty;
+            var errorA = ExtractScriptError(ddlA);
+            var errorB = ExtractScriptError(ddlB);
+
+            if (errorA != null || errorB != null)
+            {
+                ErrorBannerBorder.Visibility = Visibility.Visible;
+                ErrorBanner.Text = BuildBannerText(errorA, errorB, vm.Direction?.LabelA, vm.Direction?.LabelB);
+                DdlBoxA.Document = errorA != null
+                    ? PlaceholderDoc("(could not load — see error above)")
+                    : RawDoc(ddlA);
+                DdlBoxB.Document = errorB != null
+                    ? PlaceholderDoc("(could not load — see error above)")
+                    : RawDoc(ddlB);
+                return;
+            }
+
+            ErrorBannerBorder.Visibility = Visibility.Collapsed;
+
+            SimpleDiffHighlighter.CreateAlignedDiffDocuments(ddlA, ddlB, out var docA, out var docB);
             DdlBoxA.Document = docA;
             DdlBoxB.Document = docB;
 
-            // Hook sync scrolling now that the panels have content and are visible
             EnsureSyncScrollingHooked();
+        }
+
+        /// <summary>
+        /// Detects the "-- Could not script ..." sentinel emitted by SchemaReader when SMO scripting fails
+        /// (e.g. for views, procs, functions when VIEW DATABASE STATE is denied). Returns the human-readable
+        /// detail after the sentinel prefix, or null if the DDL does not start with the sentinel.
+        /// </summary>
+        private static string? ExtractScriptError(string ddl)
+        {
+            if (string.IsNullOrEmpty(ddl)) return null;
+            const string sentinel = "-- Could not script ";
+            if (!ddl.StartsWith(sentinel, System.StringComparison.Ordinal)) return null;
+
+            int newline = ddl.IndexOf('\n');
+            return newline < 0 ? ddl : ddl.Substring(0, newline).TrimEnd('\r');
+        }
+
+        private static string BuildBannerText(string? errorA, string? errorB, string? labelA, string? labelB)
+        {
+            var sb = new System.Text.StringBuilder();
+            if (errorA != null)
+                sb.Append("Could not load DDL for [").Append(labelA ?? "Side A").Append("]: ").Append(errorA);
+            if (errorB != null)
+            {
+                if (sb.Length > 0) sb.AppendLine();
+                sb.Append("Could not load DDL for [").Append(labelB ?? "Side B").Append("]: ").Append(errorB);
+            }
+            return sb.ToString();
+        }
+
+        private static FlowDocument PlaceholderDoc(string text)
+        {
+            var doc = new FlowDocument
+            {
+                FontFamily = new FontFamily("Consolas"),
+                PagePadding = new Thickness(4),
+            };
+            var p = new Paragraph(new Run(text)) { Foreground = Brushes.Gray, FontStyle = FontStyles.Italic };
+            doc.Blocks.Add(p);
+            return doc;
+        }
+
+        private static FlowDocument RawDoc(string text)
+        {
+            var doc = new FlowDocument
+            {
+                FontFamily = new FontFamily("Consolas"),
+                PagePadding = new Thickness(4),
+            };
+            var p = new Paragraph(new Run(text ?? string.Empty));
+            doc.Blocks.Add(p);
+            return doc;
         }
     }
 }

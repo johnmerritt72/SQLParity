@@ -226,4 +226,31 @@ public class CreateTableGeneratorTests
         Assert.Contains("CONSTRAINT [DF_T_Count] DEFAULT ((0))", ddl);
         Assert.DoesNotContain("DEFAULT (((0)))", ddl);
     }
+
+    [Fact]
+    public void ComputedColumn_NonPersisted_EmitsAsExpression()
+    {
+        var table = MakeTable("dbo", "T", new[]
+        {
+            Col("Total", "decimal", precision: 18, scale: 4,
+                isComputed: true, computedText: "([Price]*[Qty])", isPersisted: false),
+        });
+        var ddl = CreateTableGenerator.Generate(table);
+        Assert.Contains("[Total] AS ([Price]*[Qty])", ddl);
+        Assert.DoesNotContain("PERSISTED", ddl);
+        Assert.DoesNotContain("[decimal]", ddl);     // No type when computed
+        Assert.DoesNotContain("NOT NULL", ddl);      // No null spec when computed
+    }
+
+    [Fact]
+    public void ComputedColumn_Persisted_AppendsPersistedKeyword()
+    {
+        var table = MakeTable("dbo", "T", new[]
+        {
+            Col("Total", "decimal", precision: 18, scale: 4,
+                isComputed: true, computedText: "([Price]*[Qty])", isPersisted: true),
+        });
+        var ddl = CreateTableGenerator.Generate(table);
+        Assert.Contains("[Total] AS ([Price]*[Qty]) PERSISTED", ddl);
+    }
 }

@@ -42,6 +42,15 @@ public static class CreateTableGenerator
 
     private static string FormatColumn(ColumnModel col)
     {
+        if (col.IsComputed)
+        {
+            var c = new StringBuilder();
+            c.Append('[').Append(col.Name).Append("] AS ").Append(col.ComputedText);
+            if (col.IsPersisted)
+                c.Append(" PERSISTED");
+            return c.ToString();
+        }
+
         var sb = new StringBuilder();
         sb.Append('[').Append(col.Name).Append("] ");
         sb.Append(FormatDataType(col));

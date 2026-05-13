@@ -467,6 +467,20 @@ namespace SQLParity.Vsix.ViewModels
 
             Direction.Direction = SyncDirection.AtoB; // Default to A→B
 
+            RebuildTree();
+
+            OnPropertyChanged(nameof(SummaryText));
+            OnPropertyChanged(nameof(CurrentSideALabel));
+        }
+
+        private void RebuildTree()
+        {
+            if (_comparisonResult == null)
+            {
+                TreeItems.Clear();
+                return;
+            }
+
             // Build tree in a temporary list to avoid per-item UI updates
             var tempGroups = new List<ChangeTreeItemViewModel>();
 
@@ -475,7 +489,7 @@ namespace SQLParity.Vsix.ViewModels
             // database. SourceDatabase is null for single-DB compares (live
             // vs live), in which case the label is just ObjectType.ToString()
             // and behaviour matches the pre-multi-DB tree.
-            var grouped = result.Changes
+            var grouped = _comparisonResult.Changes
                 .GroupBy(c => new { c.ObjectType, c.SourceDatabase })
                 .OrderBy(g => g.Key.ObjectType.ToString(), StringComparer.Ordinal)
                 .ThenBy(g => g.Key.SourceDatabase ?? string.Empty, StringComparer.OrdinalIgnoreCase);
@@ -498,6 +512,10 @@ namespace SQLParity.Vsix.ViewModels
                         isGroup: false,
                         change: change);
                     leaf.PropertyChanged += OnLeafPropertyChanged;
+                    // Wire pair commands (closures capture `leaf`)
+                    var leafRef = leaf;
+                    leaf.PairAsTypoRenameCommand = new RelayCommand(_ => PairAsTypoRename(leafRef));
+                    leaf.UndoPairCommand = new RelayCommand(_ => UndoPair(leafRef));
 
                     groupNode.Children.Add(leaf);
                 }
@@ -507,7 +525,7 @@ namespace SQLParity.Vsix.ViewModels
 
             // Only auto-expand groups if the total change count is manageable
             // (expanding thousands of items freezes the WPF TreeView)
-            int totalChanges = result.TotalCount;
+            int totalChanges = _comparisonResult.TotalCount;
             bool autoExpand = totalChanges <= 100;
             foreach (var g in tempGroups)
                 g.IsExpanded = autoExpand;
@@ -516,9 +534,114 @@ namespace SQLParity.Vsix.ViewModels
             TreeItems.Clear();
             foreach (var g in tempGroups)
                 TreeItems.Add(g);
+        }
 
+        private void PairAsTypoRename(ChangeTreeItemViewModel leaf)
+        {
+            if (leaf?.Change == null || !leaf.HasRenameCandidates || _comparisonResult == null)
+                return;
+
+            var thisChange = leaf.Change;
+            var partnerName = leaf.FirstRenameCandidate;
+
+            // Find the partner orphan: same Schema, name == partnerName, same SourceDatabase,
+            // and the OPPOSITE Status (one NEW + one Dropped).
+            SQLParity.Core.Model.Change partner = null;
+            foreach (var c in _comparisonResult.Changes)
+            {
+                if (object.ReferenceEquals(c, thisChange)) continue;
+                if (!string.Equals(c.Id.Schema, thisChange.Id.Schema, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!string.Equals(c.Id.Name, partnerName, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!string.Equals(c.SourceDatabase, thisChange.SourceDatabase, StringComparison.OrdinalIgnoreCase)) continue;
+                bool oppositeStatus =
+                    (thisChange.Status == ChangeStatus.New && c.Status == ChangeStatus.Dropped)
+                    || (thisChange.Status == ChangeStatus.Dropped && c.Status == ChangeStatus.New);
+                if (!oppositeStatus) continue;
+                partner = c;
+                break;
+            }
+            if (partner == null) return;
+
+            // Identify which is the DB-side (NEW: in DB but not in folder) and which is folder-side (DROP).
+            var dbSide = thisChange.Status == ChangeStatus.New ? thisChange : partner;
+            var folderSide = thisChange.Status == ChangeStatus.Dropped ? thisChange : partner;
+
+            // The file's DDL becomes DdlSideA (the apply DDL — see Task 4 convention).
+            // The DB's existing DDL becomes DdlSideB (display reference).
+            // RewriteCreateNameIfPaired (in ScriptGenerator) will rewrite the CREATE
+            // name token from PairedFromName (file's name) to Id.Name (DB's name) at apply time.
+            var fileDdl = folderSide.DdlSideB ?? string.Empty;
+            var dbDdl = dbSide.DdlSideA ?? string.Empty;
+
+            // Always emit as Modified — the user sees the diff (identical bodies if
+            // the only difference was the typo in the file's CREATE name) and can
+            // uncheck the change if it's effectively a no-op.
+            var combined = new SQLParity.Core.Model.Change
+            {
+                Id = dbSide.Id,                        // DB's correct name
+                ObjectType = dbSide.ObjectType,
+                Status = ChangeStatus.Modified,
+                DdlSideA = fileDdl,                    // file's DDL (apply path)
+                DdlSideB = dbDdl,                      // DB's DDL (display)
+                PairedFromName = folderSide.Id.Name,   // file's CREATE name (for rewrite)
+                ColumnChanges = Array.Empty<SQLParity.Core.Model.ColumnChange>(),
+                SourceDatabase = dbSide.SourceDatabase,
+                SourceFilePath = folderSide.SourceFilePath,
+            };
+
+            var changes = (IList<SQLParity.Core.Model.Change>)_comparisonResult.Changes;
+            int idxThis = changes.IndexOf(thisChange);
+            int idxPartner = changes.IndexOf(partner);
+            int firstIdx = Math.Min(idxThis, idxPartner);
+            changes.Remove(thisChange);
+            changes.Remove(partner);
+            changes.Insert(Math.Min(firstIdx, changes.Count), combined);
+
+            RebuildTree();
             OnPropertyChanged(nameof(SummaryText));
-            OnPropertyChanged(nameof(CurrentSideALabel));
+        }
+
+        private void UndoPair(ChangeTreeItemViewModel leaf)
+        {
+            if (leaf?.Change == null || string.IsNullOrEmpty(leaf.Change.PairedFromName) || _comparisonResult == null)
+                return;
+            var combined = leaf.Change;
+
+            // Reconstruct the original NEW (DB-side, has DB's correct name) and DROP (folder-side, has typo name).
+            var dbSide = new SQLParity.Core.Model.Change
+            {
+                Id = combined.Id,
+                ObjectType = combined.ObjectType,
+                Status = ChangeStatus.New,
+                DdlSideA = combined.DdlSideB,   // DB's DDL was stored on SideB in the combined
+                DdlSideB = null,
+                ColumnChanges = Array.Empty<SQLParity.Core.Model.ColumnChange>(),
+                SourceDatabase = combined.SourceDatabase,
+            };
+            var folderSide = new SQLParity.Core.Model.Change
+            {
+                Id = SchemaQualifiedName.TopLevel(combined.Id.Schema, combined.PairedFromName),
+                ObjectType = combined.ObjectType,
+                Status = ChangeStatus.Dropped,
+                DdlSideA = null,
+                DdlSideB = combined.DdlSideA,   // file's DDL was stored on SideA in the combined
+                ColumnChanges = Array.Empty<SQLParity.Core.Model.ColumnChange>(),
+                SourceDatabase = combined.SourceDatabase,
+                SourceFilePath = combined.SourceFilePath,
+            };
+            // Re-attach the candidate hints so the user can re-pair if they want.
+            dbSide.RenameCandidateNames.Add(combined.PairedFromName);
+            folderSide.RenameCandidateNames.Add(combined.Id.Name);
+
+            var changes = (IList<SQLParity.Core.Model.Change>)_comparisonResult.Changes;
+            int idx = changes.IndexOf(combined);
+            changes.Remove(combined);
+            int insertAt = Math.Min(Math.Max(idx, 0), changes.Count);
+            changes.Insert(insertAt, dbSide);
+            changes.Insert(Math.Min(insertAt + 1, changes.Count), folderSide);
+
+            RebuildTree();
+            OnPropertyChanged(nameof(SummaryText));
         }
 
         public IEnumerable<Change> GetSelectedChanges()

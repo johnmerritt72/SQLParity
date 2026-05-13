@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Windows.Input;
 using SQLParity.Core.Model;
 using SQLParity.Vsix.Helpers;
 
@@ -50,6 +52,34 @@ namespace SQLParity.Vsix.ViewModels
                     + string.Join("\n• ", Change.ExternalReferences);
             }
         }
+
+        /// <summary>
+        /// Names of orphan-counterpart candidates this leaf could be paired with
+        /// (filename matches a DB-orphan's name, or vice versa). Empty when there's
+        /// no candidate.
+        /// </summary>
+        public IReadOnlyList<string> RenameCandidateNames =>
+            Change?.RenameCandidateNames ?? (IReadOnlyList<string>)System.Array.Empty<string>();
+
+        public bool HasRenameCandidates => RenameCandidateNames.Count > 0;
+
+        /// <summary>First candidate name (the one shown in the hint button).</summary>
+        public string FirstRenameCandidate =>
+            HasRenameCandidates ? RenameCandidateNames[0] : string.Empty;
+
+        /// <summary>Hint button text, e.g. "↻ pair with [Foo]?".</summary>
+        public string PairWithHint =>
+            HasRenameCandidates ? "↻ pair with [" + FirstRenameCandidate + "]?" : string.Empty;
+
+        /// <summary>True when this leaf is the result of a typo-rename pairing.</summary>
+        public bool IsPaired =>
+            Change != null && !string.IsNullOrEmpty(Change.PairedFromName);
+
+        /// <summary>Command set by ResultsViewModel — invokes pair-as-typo-rename.</summary>
+        public ICommand PairAsTypoRenameCommand { get; set; }
+
+        /// <summary>Command set by ResultsViewModel — splits a paired change back into DROP + NEW.</summary>
+        public ICommand UndoPairCommand { get; set; }
 
         public string StatusIcon
         {

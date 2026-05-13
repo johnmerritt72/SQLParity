@@ -158,4 +158,39 @@ public class TypoRenamePairTests
         foreach (var c in result.Changes)
             Assert.Empty(c.RenameCandidateNames);
     }
+
+    [Fact]
+    public void LimitToFolderObjects_PreservesPairCandidateNew()
+    {
+        // The realistic folder-mode case: limitToFolderObjects=true normally
+        // strips DB-only NEW changes. But a NEW that's a typo-rename pair
+        // candidate should survive — otherwise the user can't pair from the
+        // DB side and the DROP loses its hint partner.
+        var dbProc = Proc("dbo", "Foo", "CREATE PROCEDURE dbo.Foo AS SELECT 1");
+        var folderProc = Proc("dbo", "Fooo", "CREATE PROCEDURE dbo.Fooo AS SELECT 1");
+        var unrelatedDbProc = Proc("dbo", "Unrelated", "CREATE PROCEDURE dbo.Unrelated AS SELECT 1");
+        var fileNames = new Dictionary<SchemaQualifiedName, string?>
+        {
+            [folderProc.Id] = "Foo",  // file name matches dbProc — pair candidate
+        };
+
+        var result = SchemaComparator.Compare(
+            SchemaWith("A", dbProc, unrelatedDbProc),
+            SchemaWith("B", folderProc),
+            SchemaReadOptions.All,
+            limitToFolderObjects: true,
+            sideBFileNames: fileNames);
+
+        // Foo (DB orphan, pair candidate) survives
+        var newChange = Assert.Single(result.Changes.Where(c => c.Status == ChangeStatus.New));
+        Assert.Equal("Foo", newChange.Id.Name);
+        Assert.Contains("Fooo", newChange.RenameCandidateNames);
+
+        // Unrelated DB orphan was filtered out (no pair candidate)
+        Assert.DoesNotContain(result.Changes, c => c.Id.Name == "Unrelated");
+
+        // Folder DROP also has its pair candidate
+        var dropChange = Assert.Single(result.Changes.Where(c => c.Status == ChangeStatus.Dropped));
+        Assert.Contains("Foo", dropChange.RenameCandidateNames);
+    }
 }

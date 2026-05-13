@@ -142,8 +142,8 @@ public class ScriptGeneratorTests
             Id = SchemaQualifiedName.TopLevel("dbo", "Foo"),  // DB's correct name
             ObjectType = ObjectType.StoredProcedure,
             Status = ChangeStatus.Modified,
-            DdlSideA = "CREATE PROCEDURE dbo.Foo AS SELECT 1",   // existing DB DDL
-            DdlSideB = "CREATE PROCEDURE dbo.Fooo AS SELECT 1",  // file's typo'd DDL
+            DdlSideA = "CREATE PROCEDURE dbo.Fooo AS SELECT 1",  // file's typo'd DDL (apply DDL)
+            DdlSideB = "CREATE PROCEDURE dbo.Foo AS SELECT 1",   // existing DB DDL (display only)
             PairedFromName = "Fooo",
             ColumnChanges = System.Array.Empty<ColumnChange>(),
         };
@@ -163,8 +163,8 @@ public class ScriptGeneratorTests
             Id = SchemaQualifiedName.TopLevel("dbo", "Foo"),
             ObjectType = ObjectType.StoredProcedure,
             Status = ChangeStatus.Modified,
-            DdlSideA = "CREATE OR ALTER PROCEDURE dbo.Foo AS SELECT 1",
-            DdlSideB = "CREATE OR ALTER PROCEDURE [dbo].[Fooo] AS SELECT 1",
+            DdlSideA = "CREATE OR ALTER PROCEDURE [dbo].[Fooo] AS SELECT 1",  // file's typo'd DDL (apply DDL)
+            DdlSideB = "CREATE OR ALTER PROCEDURE dbo.Foo AS SELECT 1",        // existing DB DDL (display only)
             PairedFromName = "Fooo",
             ColumnChanges = System.Array.Empty<ColumnChange>(),
         };
@@ -186,8 +186,8 @@ public class ScriptGeneratorTests
             Id = SchemaQualifiedName.TopLevel("dbo", "Foo"),
             ObjectType = ObjectType.StoredProcedure,
             Status = ChangeStatus.Modified,
-            DdlSideA = "CREATE PROCEDURE dbo.Foo AS BEGIN EXEC dbo.Foo END",
-            DdlSideB = "CREATE PROCEDURE dbo.Fooo AS BEGIN EXEC dbo.Fooo END",
+            DdlSideA = "CREATE PROCEDURE dbo.Fooo AS BEGIN EXEC dbo.Fooo END",  // file's typo'd DDL (apply DDL)
+            DdlSideB = "CREATE PROCEDURE dbo.Foo AS BEGIN EXEC dbo.Foo END",    // existing DB DDL (display only)
             PairedFromName = "Fooo",
             ColumnChanges = System.Array.Empty<ColumnChange>(),
         };
@@ -218,7 +218,7 @@ public class ScriptGeneratorTests
         var script = ScriptGenerator.Generate(new[] { change }, DefaultOptions());
         var result = script.SqlText;
 
-        // Side B DDL passes through unchanged.
-        Assert.Contains("SELECT 2", result);
+        // DdlSideA is the apply DDL — passes through unchanged (no rewrite since not paired).
+        Assert.Contains("SELECT 1", result);
     }
 }

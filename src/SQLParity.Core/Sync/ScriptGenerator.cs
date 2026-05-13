@@ -163,18 +163,21 @@ public static class ScriptGenerator
     private static string GetSql(Change change)
     {
         if (change.Status == ChangeStatus.New)
-            return ConvertToCreateOrAlter(change.DdlSideA ?? string.Empty, change.ObjectType);
+        {
+            var newDdl = RewriteCreateNameIfPaired(change, change.DdlSideA ?? string.Empty);
+            return ConvertToCreateOrAlter(newDdl, change.ObjectType);
+        }
 
         if (change.Status == ChangeStatus.Modified)
         {
             if (change.ObjectType == ObjectType.Table && change.ColumnChanges.Count > 0)
                 return AlterTableGenerator.GenerateForModifiedTable(change.Id.Schema, change.Id.Name, change.ColumnChanges);
 
-            // For routine-like objects (procs, views, functions), apply from SideB (the file/source)
-            // so the file's body is what gets deployed. When PairedFromName is set, rewrite the
-            // CREATE name token so the DB's correct name is used (not the file's typo'd name).
-            var routineDdl = RewriteCreateNameIfPaired(change, change.DdlSideB ?? string.Empty);
-            return ConvertToCreateOrAlter(routineDdl, change.ObjectType);
+            // Apply DdlSideA (the codebase convention: source-side DDL goes to destination).
+            // RewriteCreateNameIfPaired is a no-op unless PairedFromName is set — for the
+            // typo-rename pair case, it rewrites the CREATE name token to the DB's name.
+            var modifiedDdl = RewriteCreateNameIfPaired(change, change.DdlSideA ?? string.Empty);
+            return ConvertToCreateOrAlter(modifiedDdl, change.ObjectType);
         }
 
         // Dropped — generate a DROP statement
@@ -188,7 +191,7 @@ public static class ScriptGenerator
     /// rewritten; the rest of the body is left untouched so the user can spot
     /// any in-body references that also need fixing.
     /// </summary>
-    private static string RewriteCreateNameIfPaired(Change change, string ddl)
+    internal static string RewriteCreateNameIfPaired(Change change, string ddl)
     {
         if (string.IsNullOrEmpty(change.PairedFromName) || string.IsNullOrEmpty(ddl))
             return ddl;

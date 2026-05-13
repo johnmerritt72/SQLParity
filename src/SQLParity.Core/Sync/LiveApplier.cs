@@ -113,11 +113,17 @@ public sealed class LiveApplier
         switch (change.Status)
         {
             case ChangeStatus.New:
-                return ScriptGenerator.ConvertToCreateOrAlter(change.DdlSideA ?? string.Empty, change.ObjectType);
+            {
+                var ddl = ScriptGenerator.RewriteCreateNameIfPaired(change, change.DdlSideA ?? string.Empty);
+                return ScriptGenerator.ConvertToCreateOrAlter(ddl, change.ObjectType);
+            }
             case ChangeStatus.Modified:
                 if (change.ObjectType == ObjectType.Table && change.ColumnChanges.Count > 0)
                     return AlterTableGenerator.GenerateForModifiedTable(change.Id.Schema, change.Id.Name, change.ColumnChanges);
-                return ScriptGenerator.ConvertToCreateOrAlter(change.DdlSideA ?? string.Empty, change.ObjectType);
+                {
+                    var ddl = ScriptGenerator.RewriteCreateNameIfPaired(change, change.DdlSideA ?? string.Empty);
+                    return ScriptGenerator.ConvertToCreateOrAlter(ddl, change.ObjectType);
+                }
             case ChangeStatus.Dropped:
                 return GenerateDropSql(change);
             default:

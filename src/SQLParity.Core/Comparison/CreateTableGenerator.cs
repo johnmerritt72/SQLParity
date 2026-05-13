@@ -27,12 +27,21 @@ public static class CreateTableGenerator
         sb.AppendLine();
 
         var orderedColumns = table.Columns.OrderBy(c => c.OrdinalPosition).ToList();
+        var primaryKey = table.Indexes.FirstOrDefault(i => i.IsPrimaryKey);
+        bool hasTableLevelConstraints = primaryKey != null;
+
         for (int i = 0; i < orderedColumns.Count; i++)
         {
             sb.Append('\t').Append(FormatColumn(orderedColumns[i]));
             bool isLastColumn = i == orderedColumns.Count - 1;
-            if (!isLastColumn)
+            if (!isLastColumn || hasTableLevelConstraints)
                 sb.Append(',');
+            sb.AppendLine();
+        }
+
+        if (primaryKey != null)
+        {
+            sb.Append('\t').Append(FormatPrimaryKey(primaryKey));
             sb.AppendLine();
         }
 
@@ -91,4 +100,19 @@ public static class CreateTableGenerator
         || dataType.Equals("nchar", StringComparison.OrdinalIgnoreCase)
         || dataType.Equals("text", StringComparison.OrdinalIgnoreCase)
         || dataType.Equals("ntext", StringComparison.OrdinalIgnoreCase);
+
+    private static string FormatPrimaryKey(IndexModel pk)
+    {
+        var sb = new StringBuilder();
+        sb.Append("CONSTRAINT [").Append(pk.Name).Append("] PRIMARY KEY ");
+        sb.Append(pk.IsClustered ? "CLUSTERED" : "NONCLUSTERED");
+        sb.Append(" (");
+        for (int i = 0; i < pk.Columns.Count; i++)
+        {
+            if (i > 0) sb.Append(", ");
+            sb.Append('[').Append(pk.Columns[i].Name).Append(pk.Columns[i].IsDescending ? "] DESC" : "] ASC");
+        }
+        sb.Append(')');
+        return sb.ToString();
+    }
 }

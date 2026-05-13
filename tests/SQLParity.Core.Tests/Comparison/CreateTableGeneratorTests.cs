@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using SQLParity.Core.Comparison;
 using SQLParity.Core.Model;
 using Xunit;
@@ -252,5 +253,98 @@ public class CreateTableGeneratorTests
         });
         var ddl = CreateTableGenerator.Generate(table);
         Assert.Contains("[Total] AS ([Price]*[Qty]) PERSISTED", ddl);
+    }
+
+    private static IndexModel PrimaryKey(
+        string name,
+        bool clustered,
+        params (string Column, bool Descending)[] cols) => new()
+    {
+        Id = SchemaQualifiedName.Child("dbo", "T", name),
+        Name = name,
+        IndexType = clustered ? "CLUSTERED" : "NONCLUSTERED",
+        IsClustered = clustered,
+        IsUnique = true,
+        IsPrimaryKey = true,
+        IsUniqueConstraint = false,
+        HasFilter = false,
+        FilterDefinition = null,
+        Columns = cols.Select(c => new IndexedColumnModel
+        {
+            Name = c.Column,
+            IsDescending = c.Descending,
+            IsIncluded = false,
+        }).ToList(),
+        Ddl = string.Empty,
+    };
+
+    [Fact]
+    public void PrimaryKey_SingleColumnClustered_EmittedAsTableConstraint()
+    {
+        var table = MakeTable("dbo", "T",
+            columns: new[] { Col("Id", "int") },
+            indexes: new[] { PrimaryKey("PK_T", clustered: true, ("Id", false)) });
+        var ddl = CreateTableGenerator.Generate(table);
+        Assert.Contains("[Id] [int] NOT NULL,", ddl);
+        Assert.Contains("CONSTRAINT [PK_T] PRIMARY KEY CLUSTERED ([Id] ASC)", ddl);
+    }
+
+    [Fact]
+    public void PrimaryKey_MultiColumnWithMixedDirection()
+    {
+        var table = MakeTable("dbo", "T",
+            columns: new[] { Col("A", "int", ordinal: 0), Col("B", "int", ordinal: 1) },
+            indexes: new[] { PrimaryKey("PK_T", clustered: true, ("A", false), ("B", true)) });
+        var ddl = CreateTableGenerator.Generate(table);
+        Assert.Contains("CONSTRAINT [PK_T] PRIMARY KEY CLUSTERED ([A] ASC, [B] DESC)", ddl);
+    }
+
+    [Fact]
+    public void PrimaryKey_Nonclustered()
+    {
+        var table = MakeTable("dbo", "T",
+            columns: new[] { Col("Id", "int") },
+            indexes: new[] { PrimaryKey("PK_T", clustered: false, ("Id", false)) });
+        var ddl = CreateTableGenerator.Generate(table);
+        Assert.Contains("CONSTRAINT [PK_T] PRIMARY KEY NONCLUSTERED ([Id] ASC)", ddl);
+    }
+
+    [Fact]
+    public void NonPrimaryKeyIndex_NotEmitted()
+    {
+        var nonPk = new IndexModel
+        {
+            Id = SchemaQualifiedName.Child("dbo", "T", "IX_T_X"),
+            Name = "IX_T_X",
+            IndexType = "NONCLUSTERED",
+            IsClustered = false,
+            IsUnique = false,
+            IsPrimaryKey = false,
+            IsUniqueConstraint = false,
+            HasFilter = false,
+            FilterDefinition = null,
+            Columns = new List<IndexedColumnModel>
+            {
+                new() { Name = "X", IsDescending = false, IsIncluded = false }
+            },
+            Ddl = string.Empty,
+        };
+        var table = MakeTable("dbo", "T",
+            columns: new[] { Col("X", "int") },
+            indexes: new[] { nonPk });
+        var ddl = CreateTableGenerator.Generate(table);
+        Assert.DoesNotContain("IX_T_X", ddl);
+        Assert.DoesNotContain("PRIMARY KEY", ddl);
+    }
+
+    [Fact]
+    public void LastColumnGetsCommaWhenPrimaryKeyFollows()
+    {
+        var table = MakeTable("dbo", "T",
+            columns: new[] { Col("Id", "int") },
+            indexes: new[] { PrimaryKey("PK_T", clustered: true, ("Id", false)) });
+        var ddl = CreateTableGenerator.Generate(table);
+        // The last column ("Id") must end with "," because a PK constraint follows
+        Assert.Contains("[Id] [int] NOT NULL," + Environment.NewLine, ddl);
     }
 }

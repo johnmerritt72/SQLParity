@@ -396,4 +396,12 @@ public class CreateTableGeneratorTests
         Assert.Contains("CONSTRAINT [PK_T] PRIMARY KEY CLUSTERED ([Id] ASC)," + Environment.NewLine, ddl);
         Assert.Contains("CONSTRAINT [CK_T_Id] CHECK ([Id]>(0))", ddl);
     }
+
+    [Fact]
+    public void ZeroColumns_Throws()
+    {
+        var table = MakeTable("dbo", "T", Array.Empty<ColumnModel>());
+        var ex = Assert.Throws<InvalidOperationException>(() => CreateTableGenerator.Generate(table));
+        Assert.Contains("[dbo].[T]", ex.Message);
+    }
 }

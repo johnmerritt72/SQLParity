@@ -320,14 +320,24 @@
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />  <!-- Error banner (collapsed by default) -->
+                            <RowDefinition Height="Auto" />  <!-- DDL headers -->
+                            <RowDefinition Height="*" />     <!-- DDL panes -->
                         </Grid.RowDefinitions>
 
-                        <TextBlock x:Name="DdlHeaderA" Grid.Row="0" Grid.Column="0" Text="{Binding CurrentSideALabel, StringFormat='Side A: {0}'}"
+                        <!-- Error banner -->
+                        <Border x:Name="ErrorBannerBorder" Grid.Row="0" Grid.ColumnSpan="2"
+                                Background="#FFEBEE" BorderBrush="#C62828" BorderThickness="1"
+                                Padding="8" Margin="0,0,0,4"
+                                Visibility="Collapsed">
+                            <TextBlock x:Name="ErrorBanner" TextWrapping="Wrap"
+                                       Foreground="#C62828" FontFamily="Segoe UI" />
+                        </Border>
+
+                        <TextBlock x:Name="DdlHeaderA" Grid.Row="1" Grid.Column="0" Text="{Binding CurrentSideALabel, StringFormat='Side A: {0}'}"
                                    FontWeight="SemiBold" Margin="0,0,4,4"
                                    Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" />
-                        <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Margin="4,0,0,4">
+                        <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Margin="4,0,0,4">
                             <TextBlock x:Name="DdlHeaderB"
                                        Text="{Binding Direction.LabelBWithDb, StringFormat='Side B: {0}'}"
                                        FontWeight="SemiBold"
@@ -349,14 +359,14 @@
                             </TextBlock>
                         </StackPanel>
 
-                        <Border x:Name="DdlBorderA" Grid.Row="1" Grid.Column="0"
+                        <Border x:Name="DdlBorderA" Grid.Row="2" Grid.Column="0"
                                 BorderThickness="2" CornerRadius="2" Margin="0,0,4,0"
                                 BorderBrush="Gray">
                             <RichTextBox x:Name="DdlBoxA"
                                          IsReadOnly="True" VerticalScrollBarVisibility="Auto"
                                          HorizontalScrollBarVisibility="Auto" BorderThickness="0" />
                         </Border>
-                        <Border x:Name="DdlBorderB" Grid.Row="1" Grid.Column="1"
+                        <Border x:Name="DdlBorderB" Grid.Row="2" Grid.Column="1"
                                 BorderThickness="2" CornerRadius="2" Margin="4,0,0,0"
                                 BorderBrush="Gray">
                             <RichTextBox x:Name="DdlBoxB"

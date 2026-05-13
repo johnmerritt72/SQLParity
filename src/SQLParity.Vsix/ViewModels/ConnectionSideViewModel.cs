@@ -43,6 +43,48 @@ namespace SQLParity.Vsix.ViewModels
         private bool _isConnecting;
         private string _connectionError = string.Empty;
         private bool _forceRefresh;
+        private bool _isFolderMode;
+        private string _folderPath = string.Empty;
+
+        /// <summary>
+        /// True when this side reads from a folder of .sql files instead of a
+        /// live database. Always false on Side A (database-only). Toggled by
+        /// the Side B mode selector — see step 6 of the folder-mode rollout.
+        /// </summary>
+        public bool IsFolderMode
+        {
+            get => _isFolderMode;
+            set
+            {
+                if (SetProperty(ref _isFolderMode, value))
+                {
+                    OnPropertyChanged(nameof(IsDatabaseMode));
+                    OnPropertyChanged(nameof(IsComplete));
+                }
+            }
+        }
+
+        /// <summary>True when this side connects to a live database (the default).</summary>
+        public bool IsDatabaseMode
+        {
+            get => !_isFolderMode;
+            set
+            {
+                if (value != !_isFolderMode)
+                    IsFolderMode = !value;
+            }
+        }
+
+        /// <summary>The on-disk folder path when <see cref="IsFolderMode"/> is true.</summary>
+        public string FolderPath
+        {
+            get => _folderPath;
+            set
+            {
+                if (SetProperty(ref _folderPath, value ?? string.Empty))
+                    OnPropertyChanged(nameof(IsComplete));
+            }
+        }
 
         public ConnectionSideViewModel()
         {
@@ -128,6 +170,20 @@ namespace SQLParity.Vsix.ViewModels
                     OnPropertyChanged(nameof(IsComplete));
                     OnPropertyChanged(nameof(HasCachedSchema));
                     OnPropertyChanged(nameof(CacheStatus));
+
+                    // If the user picked a real DB from the dropdown after a
+                    // successful connect, persist immediately so the saved-
+                    // connection list reflects what works without waiting for
+                    // Continue. AvailableDatabases is empty pre-connect (cleared
+                    // at the start of every DoConnectAsync), so the gate is
+                    // false on every autofill / Compare-Selected-Database path —
+                    // those still get persisted by the DoConnectAsync post-
+                    // connect call once the list populates.
+                    if (!string.IsNullOrWhiteSpace(value)
+                        && AvailableDatabases.Contains(value, StringComparer.OrdinalIgnoreCase))
+                    {
+                        SaveCurrentConnection();
+                    }
                 }
             }
         }
@@ -215,10 +271,11 @@ namespace SQLParity.Vsix.ViewModels
             }
         }
 
-        public bool IsComplete =>
-            !string.IsNullOrWhiteSpace(ServerName)
-            && !string.IsNullOrWhiteSpace(DatabaseName)
-            && !string.IsNullOrWhiteSpace(Label);
+        public bool IsComplete => IsFolderMode
+            ? !string.IsNullOrWhiteSpace(FolderPath) && !string.IsNullOrWhiteSpace(Label)
+            : !string.IsNullOrWhiteSpace(ServerName)
+                && !string.IsNullOrWhiteSpace(DatabaseName)
+                && !string.IsNullOrWhiteSpace(Label);
 
         /// <summary>
         /// Explicitly save the current connection to history. Called on Continue
@@ -227,6 +284,20 @@ namespace SQLParity.Vsix.ViewModels
         /// the current selection.
         /// </summary>
         public void SaveToHistory()
+        {
+            SaveCurrentConnection();
+        }
+
+        /// <summary>
+        /// Persist the current (Server, Database, auth, login, optional password,
+        /// Label) tuple to the connection-history store. Returns silently if either
+        /// ServerName or DatabaseName is blank, or if the underlying store throws.
+        ///
+        /// Centralises the SaveConnection call shared by SaveToHistory (Continue
+        /// gate), the DoConnectAsync post-connect path, and the DatabaseName
+        /// setter's "user picked a DB after a successful connect" trigger.
+        /// </summary>
+        private void SaveCurrentConnection()
         {
             if (string.IsNullOrWhiteSpace(ServerName) || string.IsNullOrWhiteSpace(DatabaseName))
                 return;
@@ -239,12 +310,67 @@ namespace SQLParity.Vsix.ViewModels
             catch { }
         }
 
-        public string BuildConnectionString()
+        /// <summary>
+        /// Apply a specific saved connection's credentials to this side, using the
+        /// caller-supplied server/database names verbatim. Suppresses the
+        /// <see cref="ServerName"/>-setter auto-fill so it does not race a second
+        /// <c>FindByServer</c> lookup against the partially populated state, then
+        /// kicks off an async connect to populate the database dropdown.
+        ///
+        /// Used by the "Compare Selected Database" menu command, which already
+        /// knows the exact (server, database) pair from the Object Explorer node.
+        /// </summary>
+        public void LoadFromSavedConnection(SavedConnection saved, string overrideServer, string overrideDatabase)
+        {
+            if (saved == null) return;
+
+            // Clear any stale list left over from a prior connect on this side
+            // so the DatabaseName setter's "successful connect" gate (which uses
+            // AvailableDatabases.Contains) doesn't fire a save against credentials
+            // that haven't been verified against the new server yet.
+            AvailableDatabases.Clear();
+
+            _isAutoFilling = true;
+            try
+            {
+                ServerName = overrideServer ?? string.Empty;
+                DatabaseName = overrideDatabase ?? string.Empty;
+
+                if (!string.IsNullOrWhiteSpace(saved.Label))
+                    Label = saved.Label;
+
+                UseWindowsAuth = saved.UseWindowsAuth;
+                if (!saved.UseWindowsAuth)
+                {
+                    SqlLogin = saved.SqlLogin ?? string.Empty;
+                    if (PasswordSavingEnabled())
+                        SqlPassword = saved.GetPassword();
+                }
+            }
+            finally
+            {
+                _isAutoFilling = false;
+            }
+
+            // Auto-connect to populate the database list. Fire-and-forget mirrors
+            // the existing ServerName-setter auto-fill behaviour.
+            ConnectAsyncNoRefresh();
+        }
+
+        public string BuildConnectionString() => BuildConnectionString(null);
+
+        /// <summary>
+        /// Builds a connection string using this side's credentials but with
+        /// a caller-specified database. Used by folder mode's multi-DB Side A
+        /// flow, which needs to read each USE-referenced database with the
+        /// same credentials.
+        /// </summary>
+        public string BuildConnectionString(string? overrideDatabase)
         {
             var builder = new SqlConnectionStringBuilder
             {
                 DataSource = ServerName,
-                InitialCatalog = DatabaseName,
+                InitialCatalog = overrideDatabase ?? DatabaseName,
                 TrustServerCertificate = true,
             };
 
@@ -404,15 +530,11 @@ namespace SQLParity.Vsix.ViewModels
                     DatabaseName = string.Empty;
                 }
 
-                // Save to history after successful connect (include label).
-                // Only save if we have a valid DatabaseName — saving a blank DB
-                // would overwrite the good one and cause the same issue next time.
-                if (!string.IsNullOrWhiteSpace(DatabaseName))
-                {
-                    var savePassword = !UseWindowsAuth && PasswordSavingEnabled();
-                    _historyStore.SaveConnection(ServerName, DatabaseName, UseWindowsAuth, SqlLogin,
-                        savePassword ? SqlPassword : null, Label);
-                }
+                // Save to history after successful connect.
+                // SaveCurrentConnection is a no-op when DatabaseName is blank, so
+                // we don't double-guard here (saving blank would overwrite the
+                // good row and cause the same issue next time).
+                SaveCurrentConnection();
                 if (refreshServerList)
                 {
                     var currentServer = ServerName;

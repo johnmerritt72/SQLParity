@@ -44,7 +44,9 @@
                                 <TextBlock Text="{Binding Direction.LabelB}" />
                             </StackPanel>
                         </Button>
-                        <Button Command="{Binding Direction.SetBtoACommand}" Padding="8,4" Margin="4,0">
+                        <Button Command="{Binding Direction.SetBtoACommand}" Padding="8,4" Margin="4,0"
+                                ToolTip="{Binding Direction.BtoAToolTip}"
+                                ToolTipService.ShowOnDisabled="True">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="{Binding Direction.LabelB}" />
                                 <TextBlock Text=" &#x2192; " />
@@ -66,7 +68,9 @@
                         </StackPanel.Style>
                         <TextBlock Text="{Binding Direction.ArrowText}" VerticalAlignment="Center" FontWeight="SemiBold"
                                    Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" Margin="0,0,8,0" />
-                        <Button Content="Flip" Command="{Binding Direction.FlipCommand}" Padding="8,4" />
+                        <Button Content="Flip" Command="{Binding Direction.FlipCommand}" Padding="8,4"
+                                ToolTip="{Binding Direction.BtoAToolTip}"
+                                ToolTipService.ShowOnDisabled="True" />
                     </StackPanel>
                 </StackPanel>
 
@@ -316,25 +320,53 @@
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />  <!-- Error banner (collapsed by default) -->
+                            <RowDefinition Height="Auto" />  <!-- DDL headers -->
+                            <RowDefinition Height="*" />     <!-- DDL panes -->
                         </Grid.RowDefinitions>
 
-                        <TextBlock x:Name="DdlHeaderA" Grid.Row="0" Grid.Column="0" Text="{Binding Direction.LabelA, StringFormat='Side A: {0}'}"
+                        <!-- Error banner -->
+                        <Border x:Name="ErrorBannerBorder" Grid.Row="0" Grid.ColumnSpan="2"
+                                Background="#FFEBEE" BorderBrush="#C62828" BorderThickness="1"
+                                Padding="8" Margin="0,0,0,4"
+                                Visibility="Collapsed">
+                            <TextBlock x:Name="ErrorBanner" TextWrapping="Wrap"
+                                       Foreground="#C62828" FontFamily="Segoe UI" />
+                        </Border>
+
+                        <TextBlock x:Name="DdlHeaderA" Grid.Row="1" Grid.Column="0" Text="{Binding CurrentSideALabel, StringFormat='Side A: {0}'}"
                                    FontWeight="SemiBold" Margin="0,0,4,4"
                                    Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" />
-                        <TextBlock x:Name="DdlHeaderB" Grid.Row="0" Grid.Column="1" Text="{Binding Direction.LabelB, StringFormat='Side B: {0}'}"
-                                   FontWeight="SemiBold" Margin="4,0,0,4"
-                                   Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" />
+                        <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Margin="4,0,0,4">
+                            <TextBlock x:Name="DdlHeaderB"
+                                       Text="{Binding Direction.LabelBWithDb, StringFormat='Side B: {0}'}"
+                                       FontWeight="SemiBold"
+                                       Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" />
+                            <TextBlock Text="{Binding SelectedSideBFileName, StringFormat='   →   {0}'}"
+                                       FontStyle="Italic"
+                                       Foreground="Gray"
+                                       VerticalAlignment="Center">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding SelectedSideBFileName}" Value="">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
 
-                        <Border x:Name="DdlBorderA" Grid.Row="1" Grid.Column="0"
+                        <Border x:Name="DdlBorderA" Grid.Row="2" Grid.Column="0"
                                 BorderThickness="2" CornerRadius="2" Margin="0,0,4,0"
                                 BorderBrush="Gray">
                             <RichTextBox x:Name="DdlBoxA"
                                          IsReadOnly="True" VerticalScrollBarVisibility="Auto"
                                          HorizontalScrollBarVisibility="Auto" BorderThickness="0" />
                         </Border>
-                        <Border x:Name="DdlBorderB" Grid.Row="1" Grid.Column="1"
+                        <Border x:Name="DdlBorderB" Grid.Row="2" Grid.Column="1"
                                 BorderThickness="2" CornerRadius="2" Margin="4,0,0,0"
                                 BorderBrush="Gray">
                             <RichTextBox x:Name="DdlBoxB"
@@ -342,23 +374,6 @@
                                          HorizontalScrollBarVisibility="Auto" BorderThickness="0" />
                         </Border>
 
-                        <!-- Loading overlay for DDL panels -->
-                        <Border Grid.Row="0" Grid.RowSpan="2" Grid.ColumnSpan="2"
-                                Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}" Opacity="0.8">
-                            <Border.Style>
-                                <Style TargetType="Border">
-                                    <Setter Property="Visibility" Value="Collapsed" />
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsLoadingDdl}" Value="True">
-                                            <Setter Property="Visibility" Value="Visible" />
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Border.Style>
-                            <TextBlock Text="Loading DDL..." FontStyle="Italic"
-                                       HorizontalAlignment="Center" VerticalAlignment="Center"
-                                       Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
-                        </Border>
                     </Grid>
                 </Grid>
 

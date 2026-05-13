@@ -41,33 +41,6 @@ public sealed class SchemaReader
         IncludeDatabaseContext = false,
     };
 
-    private static ScriptingOptions CreateTableScriptingOptions() => new ScriptingOptions
-    {
-        ScriptDrops = false,
-        IncludeIfNotExists = false,
-        SchemaQualify = true,
-        AnsiPadding = false,
-        // Preserve explicit COLLATE clauses on string columns. If the destination
-        // database has a different default collation, stripping collations would
-        // cause Msg 468 collation conflicts when procs compare strings across tables.
-        NoCollation = false,
-        IncludeHeaders = false,
-        ScriptSchema = true,
-        ScriptData = false,
-        // Script inline constraints: PK, CHECK, DEFAULT — not foreign keys or indexes (scripted separately)
-        DriPrimaryKey = true,
-        DriChecks = true,
-        DriDefaults = true,
-        DriAllConstraints = false,
-        DriAllKeys = false,
-        DriIndexes = false,
-        Indexes = false,
-        Triggers = false,
-        ExtendedProperties = false,
-        Permissions = false,
-        IncludeDatabaseContext = false,
-    };
-
     private static string ScriptObject(StringCollection sc)
         => string.Join(Environment.NewLine, sc.Cast<string>());
 
@@ -82,85 +55,6 @@ public sealed class SchemaReader
     public DatabaseSchema ReadSchema(IProgress<SchemaReadProgress>? progress)
     {
         return ReadSchema(progress, SchemaReadOptions.All);
-    }
-
-    /// <summary>
-    /// Scripts a single table's DDL on demand. Used for lazy-loading — table DDL
-    /// is not scripted during the initial read phase to save time on large databases.
-    /// </summary>
-    public string ScriptTable(string schema, string name)
-    {
-        try
-        {
-            var builder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(_connectionString);
-            var serverConn = new ServerConnection
-            {
-                ServerInstance = builder.DataSource,
-                DatabaseName = _databaseName,
-                LoginSecure = builder.IntegratedSecurity,
-                ConnectTimeout = builder.ConnectTimeout,
-                StatementTimeout = 0,
-            };
-            if (!builder.IntegratedSecurity)
-            {
-                serverConn.Login = builder.UserID;
-                serverConn.Password = builder.Password;
-            }
-
-            var server = new Server(serverConn);
-            server.SetDefaultInitFields(typeof(Table), true);
-            server.SetDefaultInitFields(typeof(Column), true);
-            server.SetDefaultInitFields(typeof(Microsoft.SqlServer.Management.Smo.Index), true);
-            server.SetDefaultInitFields(typeof(ForeignKey), true);
-            server.SetDefaultInitFields(typeof(Check), true);
-
-            var db = server.Databases[_databaseName];
-            if (db == null) return $"-- Database '{_databaseName}' not found";
-
-            var table = db.Tables[name, schema];
-            if (table == null) return $"-- Table [{schema}].[{name}] not found";
-
-            string ddl;
-            try
-            {
-                var opts = CreateTableScriptingOptions();
-                ddl = ScriptTopLevel(table.Script(opts));
-            }
-            catch
-            {
-                // Full scripting failed (e.g. VIEW DATABASE STATE denied).
-                // Fall back to minimal options that avoid permission-heavy metadata queries.
-                var minimal = new ScriptingOptions
-                {
-                    ScriptDrops = false,
-                    SchemaQualify = true,
-                    NoCollation = false,
-                    DriPrimaryKey = true,
-                    DriDefaults = true,
-                    DriChecks = false,
-                    DriAllConstraints = false,
-                    DriAllKeys = false,
-                    DriIndexes = false,
-                    Indexes = false,
-                    Triggers = false,
-                    ExtendedProperties = false,
-                    Permissions = false,
-                };
-                ddl = ScriptTopLevel(table.Script(minimal));
-            }
-
-            serverConn.Disconnect();
-            return ddl;
-        }
-        catch (Exception ex)
-        {
-            // SMO wraps the real error in inner exceptions — unwrap to show the root cause
-            var inner = ex;
-            while (inner.InnerException != null)
-                inner = inner.InnerException;
-            var detail = inner == ex ? ex.Message : $"{ex.Message}\n-- Root cause: {inner.Message}";
-            return $"-- Could not script table [{schema}].[{name}]: {detail}";
-        }
     }
 
     public DatabaseSchema ReadSchema(IProgress<SchemaReadProgress>? progress, SchemaReadOptions options,
@@ -255,7 +149,6 @@ public sealed class SchemaReader
 
         // Create shared ScriptingOptions instances once (avoids re-allocation per Read* method)
         var opts = CreateScriptingOptions();
-        var tableOpts = CreateTableScriptingOptions();
 
         var ct = cancellationToken;
 
@@ -430,70 +323,6 @@ public sealed class SchemaReader
                 Name = s.Name,
                 Owner = s.Owner ?? string.Empty,
                 Ddl = ddl,
-            });
-        }
-
-        return result;
-    }
-
-    private static List<TableModel> ReadTables(Database db, ScriptingOptions tableOpts, ref int completed, int total, IProgress<SchemaReadProgress>? progress, System.Threading.CancellationToken ct = default)
-    {
-        var result = new List<TableModel>();
-
-        foreach (Table t in db.Tables)
-        {
-            ct.ThrowIfCancellationRequested();
-
-            if (t.IsSystemObject)
-                continue;
-
-            completed++;
-            progress?.Report(new SchemaReadProgress
-            {
-                CurrentOperation = $"Tables: [{t.Schema}].[{t.Name}]",
-                CompletedItems = completed,
-                TotalItems = total,
-            });
-
-            // DDL is NOT scripted during the read phase — it's lazy-loaded on demand
-            // when the user clicks a table in the results view. This saves ~200ms per table.
-            // The comparison engine uses column/index/constraint metadata, not DDL text.
-
-            var tableId = SchemaQualifiedName.TopLevel(t.Schema, t.Name);
-
-            List<ColumnModel> columns;
-            List<IndexModel> indexes;
-            List<ForeignKeyModel> foreignKeys;
-            List<CheckConstraintModel> checks;
-            List<TriggerModel> triggers;
-            try
-            {
-                columns = ReadColumns(t.Columns, t.Schema, t.Name);
-                indexes = ReadIndexes(t.Indexes, t.Schema, t.Name);
-                foreignKeys = ReadForeignKeys(t.ForeignKeys, t.Schema, t.Name);
-                checks = ReadChecks(t.Checks, t.Schema, t.Name);
-                triggers = ReadTriggers(t.Triggers, t.Schema, t.Name);
-            }
-            catch
-            {
-                columns = new List<ColumnModel>();
-                indexes = new List<IndexModel>();
-                foreignKeys = new List<ForeignKeyModel>();
-                checks = new List<CheckConstraintModel>();
-                triggers = new List<TriggerModel>();
-            }
-
-            result.Add(new TableModel
-            {
-                Id = tableId,
-                Schema = t.Schema,
-                Name = t.Name,
-                Ddl = string.Empty,  // Lazy-loaded on demand via ScriptTable()
-                Columns = columns,
-                Indexes = indexes,
-                ForeignKeys = foreignKeys,
-                CheckConstraints = checks,
-                Triggers = triggers,
             });
         }
 

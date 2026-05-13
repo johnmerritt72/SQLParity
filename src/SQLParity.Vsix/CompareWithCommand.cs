@@ -147,12 +147,39 @@ namespace SQLParity.Vsix
                 // Ensure we are on the ConnectionSetup screen
                 hostVm.CurrentState = ViewModels.WorkflowState.ConnectionSetup;
 
-                if (!string.IsNullOrWhiteSpace(serverName))
+                var sideA = hostVm.SetupViewModel.SideA;
+
+                // If we have both server and database, prefer an exact saved
+                // connection so we pick up credentials specific to this DB
+                // rather than the server's most-recently-used row.
+                Helpers.SavedConnection exactMatch = null;
+                if (!string.IsNullOrWhiteSpace(serverName) && !string.IsNullOrWhiteSpace(databaseName))
                 {
-                    hostVm.SetupViewModel.SideA.ServerName = serverName;
+                    try
+                    {
+                        var store = new Helpers.ConnectionHistoryStore();
+                        exactMatch = store.FindByServerAndDatabase(serverName, databaseName);
+                    }
+                    catch (Exception lookupEx)
+                    {
+                        System.Diagnostics.Debug.WriteLine(
+                            "SQLParity: saved-connection lookup failed: " + lookupEx.Message);
+                    }
                 }
 
-                hostVm.SetupViewModel.SideA.DatabaseName = databaseName;
+                if (exactMatch != null)
+                {
+                    sideA.LoadFromSavedConnection(exactMatch, serverName, databaseName);
+                }
+                else
+                {
+                    if (!string.IsNullOrWhiteSpace(serverName))
+                    {
+                        sideA.ServerName = serverName;
+                    }
+
+                    sideA.DatabaseName = databaseName;
+                }
             }
 
             var windowFrame = (IVsWindowFrame)window.Frame;

@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
-using System.Threading.Tasks;
 using System.Windows.Input;
 using System.Windows.Threading;
 using SQLParity.Core.Comparison;
@@ -19,9 +18,8 @@ namespace SQLParity.Vsix.ViewModels
         private DispatcherTimer _toastTimer;
         private ObservableCollection<TableTreeNode> _tableTreeItems;
         private bool _isTableSelected;
-        private bool _isLoadingDdl;
-        private int _ddlLoadGeneration;
         private string _filterText = string.Empty;
+        private string _defaultDbNameA = string.Empty;
 
         public ResultsViewModel()
         {
@@ -310,12 +308,6 @@ namespace SQLParity.Vsix.ViewModels
             set => SetProperty(ref _isTableSelected, value);
         }
 
-        public bool IsLoadingDdl
-        {
-            get => _isLoadingDdl;
-            set => SetProperty(ref _isLoadingDdl, value);
-        }
-
         public ChangeTreeItemViewModel SelectedTreeItem
         {
             get => _selectedTreeItem;
@@ -326,12 +318,55 @@ namespace SQLParity.Vsix.ViewModels
                     OnPropertyChanged(nameof(SelectedChange));
                     OnPropertyChanged(nameof(SelectedObjectName));
                     OnPropertyChanged(nameof(SelectedRiskText));
+                    OnPropertyChanged(nameof(SelectedSideBFileName));
+                    OnPropertyChanged(nameof(CurrentSideALabel));
                     UpdateTableTree();
                 }
             }
         }
 
         public Change SelectedChange => _selectedTreeItem?.Change;
+
+        /// <summary>
+        /// Side A's pane-header label with a database-name suffix that tracks
+        /// the currently-selected change. In multi-DB folder-mode comparisons
+        /// the suffix matches <see cref="Change.SourceDatabase"/> of the
+        /// selected change so the user can see which database the displayed
+        /// object lives in. Falls back to a per-comparison default
+        /// (<c>_defaultDbNameA</c>) before any change is selected — empty
+        /// when the comparison spans 2+ source databases, the single source
+        /// database when the folder targets one DB, or
+        /// <c>SideA.DatabaseName</c> when the comparison is live-vs-live.
+        /// </summary>
+        public string CurrentSideALabel
+        {
+            get
+            {
+                var activeDbName = !string.IsNullOrEmpty(SelectedChange?.SourceDatabase)
+                    ? SelectedChange.SourceDatabase
+                    : _defaultDbNameA;
+
+                return string.IsNullOrEmpty(activeDbName)
+                    ? Direction.LabelA
+                    : $"{Direction.LabelA} ({activeDbName})";
+            }
+        }
+
+        /// <summary>
+        /// Filename (no path) of the .sql file backing the selected change on
+        /// Side B in folder mode. Empty string when Side B is a live database
+        /// or when the object is New on Side A (no file yet). The Side B
+        /// header in the results view appends this so the user always knows
+        /// which file they're looking at.
+        /// </summary>
+        public string SelectedSideBFileName
+        {
+            get
+            {
+                var path = SelectedChange?.SourceFilePath;
+                return string.IsNullOrEmpty(path) ? string.Empty : System.IO.Path.GetFileName(path);
+            }
+        }
 
         public string SelectedDdlA
         {
@@ -348,83 +383,6 @@ namespace SQLParity.Vsix.ViewModels
             {
                 var change = SelectedChange;
                 return change?.DdlSideB ?? string.Empty;
-            }
-        }
-
-        /// <summary>
-        /// Loads table DDL for both sides on a background thread.
-        /// Uses a generation counter to discard stale results when the user
-        /// clicks a different item before loading completes.
-        /// </summary>
-        public async Task LoadDdlAsync()
-        {
-            var change = SelectedChange;
-            if (change == null) return;
-
-            bool needA = change.ObjectType == ObjectType.Table
-                && string.IsNullOrEmpty(change.DdlSideA)
-                && change.Status != ChangeStatus.Dropped
-                && !string.IsNullOrEmpty(_connStrA);
-
-            bool needB = change.ObjectType == ObjectType.Table
-                && string.IsNullOrEmpty(change.DdlSideB)
-                && change.Status != ChangeStatus.New
-                && !string.IsNullOrEmpty(_connStrB);
-
-            if (!needA && !needB) return;
-
-            int generation = ++_ddlLoadGeneration;
-            IsLoadingDdl = true;
-
-            try
-            {
-                // Capture locals for the background work
-                var connA = _connStrA;
-                var connB = _connStrB;
-                var dbA = _dbNameA;
-                var dbB = _dbNameB;
-                var schema = change.Id.Schema;
-                var name = change.Id.Name;
-
-                string ddlA = null;
-                string ddlB = null;
-
-                await Task.Run(() =>
-                {
-                    if (needA)
-                    {
-                        try
-                        {
-                            var reader = new SQLParity.Core.SchemaReader(connA, dbA);
-                            ddlA = reader.ScriptTable(schema, name);
-                        }
-                        catch { }
-                    }
-
-                    if (needB)
-                    {
-                        try
-                        {
-                            var reader = new SQLParity.Core.SchemaReader(connB, dbB);
-                            ddlB = reader.ScriptTable(schema, name);
-                        }
-                        catch { }
-                    }
-                });
-
-                // Discard if the user selected a different item while we were loading
-                if (generation != _ddlLoadGeneration) return;
-
-                if (ddlA != null) change.DdlSideA = ddlA;
-                if (ddlB != null) change.DdlSideB = ddlB;
-
-                OnPropertyChanged(nameof(SelectedDdlA));
-                OnPropertyChanged(nameof(SelectedDdlB));
-            }
-            finally
-            {
-                if (generation == _ddlLoadGeneration)
-                    IsLoadingDdl = false;
             }
         }
 
@@ -471,33 +429,65 @@ namespace SQLParity.Vsix.ViewModels
             }
         }
 
-        // Connection info stored for lazy DDL scripting
-        private string _connStrA;
-        private string _connStrB;
-        private string _dbNameA;
-        private string _dbNameB;
-
         public void Populate(ComparisonResult result, ConnectionSideViewModel sideA, ConnectionSideViewModel sideB)
         {
             _comparisonResult = result;
-            _connStrA = sideA.BuildConnectionString();
-            _connStrB = sideB.BuildConnectionString();
-            _dbNameA = sideA.DatabaseName;
-            _dbNameB = sideB.DatabaseName;
+
+            // Determine the default DB-name suffix for Side A's header before
+            // any change is selected. Three cases:
+            //   - 0 distinct SourceDatabase values across changes → live-vs-live;
+            //     fall back to the user's connection DatabaseName.
+            //   - 1 distinct value → folder targets one DB; show that one (which
+            //     may differ from what the user picked in Setup).
+            //   - 2+ distinct values → folder spans multiple DBs; drop the
+            //     suffix until the user clicks a change in the tree.
+            var distinctSourceDbs = result.Changes
+                .Select(c => c.SourceDatabase)
+                .Where(s => !string.IsNullOrEmpty(s))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (distinctSourceDbs.Count == 0)
+                _defaultDbNameA = sideA.DatabaseName ?? string.Empty;
+            else if (distinctSourceDbs.Count == 1)
+                _defaultDbNameA = distinctSourceDbs[0];
+            else
+                _defaultDbNameA = string.Empty;
+
             Direction.PopulateFrom(sideA, sideB);
+
+            // Block B→A entirely when Side B has no objects — the comparison
+            // would express every Side A object as a "drop on apply" and the
+            // user has no legitimate reason to seed an empty DB by dropping
+            // a populated one.
+            Direction.IsBtoADangerous = !result.SideB.HasObjects;
+            Direction.BtoADangerExplanation = Direction.IsBtoADangerous
+                ? "Side B has no objects — applying B → A would drop everything on Side A. " +
+                  "Pick a non-empty folder or database before reversing the direction."
+                : string.Empty;
+
             Direction.Direction = SyncDirection.AtoB; // Default to A→B
 
             // Build tree in a temporary list to avoid per-item UI updates
             var tempGroups = new List<ChangeTreeItemViewModel>();
 
+            // Group by (ObjectType, SourceDatabase) so multi-DB folder-mode
+            // comparisons split each object-type branch into one node per
+            // database. SourceDatabase is null for single-DB compares (live
+            // vs live), in which case the label is just ObjectType.ToString()
+            // and behaviour matches the pre-multi-DB tree.
             var grouped = result.Changes
-                .GroupBy(c => c.ObjectType)
-                .OrderBy(g => g.Key.ToString());
+                .GroupBy(c => new { c.ObjectType, c.SourceDatabase })
+                .OrderBy(g => g.Key.ObjectType.ToString(), StringComparer.Ordinal)
+                .ThenBy(g => g.Key.SourceDatabase ?? string.Empty, StringComparer.OrdinalIgnoreCase);
 
             foreach (var group in grouped)
             {
+                string groupLabel = string.IsNullOrEmpty(group.Key.SourceDatabase)
+                    ? group.Key.ObjectType.ToString()
+                    : $"{group.Key.ObjectType} ({group.Key.SourceDatabase})";
+
                 var groupNode = new ChangeTreeItemViewModel(
-                    group.Key.ToString(),
+                    groupLabel,
                     isGroup: true,
                     change: null);
 
@@ -528,6 +518,7 @@ namespace SQLParity.Vsix.ViewModels
                 TreeItems.Add(g);
 
             OnPropertyChanged(nameof(SummaryText));
+            OnPropertyChanged(nameof(CurrentSideALabel));
         }
 
         public IEnumerable<Change> GetSelectedChanges()

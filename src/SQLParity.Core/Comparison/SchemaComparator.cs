@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using SQLParity.Core.Model;
+using SQLParity.Core.Parsing;
 
 namespace SQLParity.Core.Comparison;
 
@@ -20,7 +22,9 @@ public static class SchemaComparator
         SchemaReadOptions options,
         bool ignoreCommentsInStoredProcedures = false,
         bool ignoreWhitespaceInStoredProcedures = false,
-        bool ignoreOptionalBrackets = false)
+        bool ignoreOptionalBrackets = false,
+        bool limitToFolderObjects = false,
+        bool sideBIsFolder = false)
     {
         options = options ?? SchemaReadOptions.All;
         var changes = new List<Change>();
@@ -32,9 +36,24 @@ public static class SchemaComparator
             ? (Func<string, string>)(s => NormalizeDdl(StripOptionalSqlBrackets(s)))
             : NormalizeDdl;
 
+        // Folder-aware normalizer factory: collapses both the CREATE/CREATE
+        // OR ALTER variants AND (in folder mode) the IF NOT EXISTS BEGIN ...
+        // END idempotency wrapper around the inner CREATE statement. SMO
+        // scripts the database side as a bare CREATE; SQLParity-generated
+        // files wrap it. Without this canonicalization every freshly-synced
+        // file re-appears as Modified on the next compare. Applied to every
+        // non-routine type (routines have their own composed normalizer).
+        Func<string, string> FolderAwareNormalizer(ObjectType type)
+        {
+            if (sideBIsFolder)
+                return s => generalNormalizer(StripCreateOrAlter(ExtractCreateBatch(s, type)));
+            return s => generalNormalizer(StripCreateOrAlter(s));
+        }
+
         // Tables
         if (options.IncludeTables)
-            changes.AddRange(CompareTables(sideA.Tables, sideB.Tables, generalNormalizer));
+            changes.AddRange(CompareTables(sideA.Tables, sideB.Tables,
+                FolderAwareNormalizer(ObjectType.Table)));
 
         // Views
         if (options.IncludeViews)
@@ -42,7 +61,7 @@ public static class SchemaComparator
                 sideA.Views, sideB.Views,
                 ObjectType.View,
                 v => v.Id, v => v.Ddl,
-                generalNormalizer));
+                FolderAwareNormalizer(ObjectType.View)));
 
         // Stored procedures and user-defined functions are both "routines" —
         // textual T-SQL bodies. They share the same routine-level normalizer,
@@ -77,7 +96,7 @@ public static class SchemaComparator
                 sideA.Sequences, sideB.Sequences,
                 ObjectType.Sequence,
                 s => s.Id, s => s.Ddl,
-                generalNormalizer));
+                FolderAwareNormalizer(ObjectType.Sequence)));
 
         // Synonyms
         if (options.IncludeSynonyms)
@@ -85,7 +104,7 @@ public static class SchemaComparator
                 sideA.Synonyms, sideB.Synonyms,
                 ObjectType.Synonym,
                 s => s.Id, s => s.Ddl,
-                generalNormalizer));
+                FolderAwareNormalizer(ObjectType.Synonym)));
 
         // UserDefinedDataTypes
         if (options.IncludeUserDefinedDataTypes)
@@ -93,7 +112,7 @@ public static class SchemaComparator
                 sideA.UserDefinedDataTypes, sideB.UserDefinedDataTypes,
                 ObjectType.UserDefinedDataType,
                 t => t.Id, t => t.Ddl,
-                generalNormalizer));
+                FolderAwareNormalizer(ObjectType.UserDefinedDataType)));
 
         // UserDefinedTableTypes
         if (options.IncludeUserDefinedTableTypes)
@@ -101,11 +120,27 @@ public static class SchemaComparator
                 sideA.UserDefinedTableTypes, sideB.UserDefinedTableTypes,
                 ObjectType.UserDefinedTableType,
                 t => t.Id, t => t.Ddl,
-                generalNormalizer));
+                FolderAwareNormalizer(ObjectType.UserDefinedTableType)));
 
-        // Schemas (match by Name, case-insensitive)
+        // Schemas (match by Name, case-insensitive). Note: the IdempotentDdlWrapper
+        // emits CREATE SCHEMA inside an EXEC(N'...') string literal because
+        // CREATE SCHEMA must be the first statement in its batch — but the
+        // parser treats EXEC arguments as opaque strings, so a SQLParity-
+        // generated schema file currently doesn't round-trip cleanly. Tracked
+        // as a known limitation; using the folder-aware normalizer here is a
+        // best-effort that won't make the situation worse.
         if (options.IncludeSchemas)
-            changes.AddRange(CompareSchemas(sideA.Schemas, sideB.Schemas, generalNormalizer));
+            changes.AddRange(CompareSchemas(sideA.Schemas, sideB.Schemas,
+                FolderAwareNormalizer(ObjectType.Schema)));
+
+        // Folder-mode filter: when Side B is a folder of .sql files and the
+        // user wants to focus only on objects represented in source control,
+        // drop changes whose object is missing from B (Status == New, i.e.
+        // exists on A only). Modified and Dropped (B-only) changes survive
+        // — Modified is the actual drift, Dropped means the file has an
+        // object the live DB doesn't, which the user still wants to see.
+        if (limitToFolderObjects)
+            changes.RemoveAll(c => c.Status == ChangeStatus.New);
 
         // Classify column-level risk first so RiskClassifier can aggregate them.
         foreach (var change in changes)
@@ -436,7 +471,14 @@ public static class SchemaComparator
             // Lowercase for case-insensitive comparison
             normalized.AppendLine(trimmed.ToLowerInvariant());
         }
-        return normalized.ToString().TrimEnd();
+        // Optional T-SQL statement terminator. Including or omitting it
+        // doesn't change the semantics of a CREATE statement, but SMO scripts
+        // omit it while wrapped/hand-written DDL often includes it — strip
+        // so they compare equal.
+        var result = normalized.ToString().TrimEnd();
+        while (result.EndsWith(";", StringComparison.Ordinal))
+            result = result.Substring(0, result.Length - 1).TrimEnd();
+        return result;
     }
 
     /// <summary>
@@ -606,10 +648,269 @@ public static class SchemaComparator
 
         return s =>
         {
+            // Always rewrite CREATE OR ALTER to bare CREATE for comparison.
+            // The two forms are semantically equivalent, but folder mode
+            // emits the OR ALTER variant for re-runnable files while SMO
+            // scripts the database side as plain CREATE — without this step
+            // every freshly-synced folder file would re-appear as Modified
+            // on the next compare.
+            s = StripCreateOrAlter(s);
+            // Same idea for PROC vs PROCEDURE — T-SQL accepts both as the
+            // same keyword. SMO scripts CREATE   PROC while folder files
+            // typically carry the long form CREATE PROCEDURE. Canonicalize
+            // to PROCEDURE so the textual diff doesn't fire on this alone.
+            s = NormalizeProcKeyword(s);
             if (ignoreComments) s = StripSqlComments(s);
             if (ignoreOptionalBrackets) s = StripOptionalSqlBrackets(s);
             return normalizeFinal(s);
         };
+    }
+
+    /// <summary>
+    /// Rewrites <c>CREATE PROC</c> (whitespace-tolerant) to
+    /// <c>CREATE PROCEDURE</c>. T-SQL treats the two as the same keyword;
+    /// the comparator must too. Comments, strings, and bracketed
+    /// identifiers are skipped while finding the leading CREATE.
+    /// </summary>
+    internal static string NormalizeProcKeyword(string ddl)
+    {
+        if (string.IsNullOrEmpty(ddl)) return string.Empty;
+
+        int createIdx = FindCreateKeyword(ddl);
+        if (createIdx < 0) return ddl;
+
+        int afterCreate = createIdx + "CREATE".Length;
+        int j = afterCreate;
+        while (j < ddl.Length && char.IsWhiteSpace(ddl[j])) j++;
+
+        if (!IsKeywordAt(ddl, j, "PROC")) return ddl;
+        // IsKeywordAt enforces word boundary, so j..j+4 is exactly "PROC"
+        // and the char after isn't an identifier char — i.e. not "PROCEDURE".
+        return ddl.Substring(0, j) + "PROCEDURE" + ddl.Substring(j + 4);
+    }
+
+    /// <summary>
+    /// Removes the optional <c>OR ALTER</c> tokens between <c>CREATE</c> and
+    /// the object-type keyword (PROCEDURE / FUNCTION / VIEW / TRIGGER), so
+    /// <c>CREATE PROCEDURE Foo</c> and <c>CREATE OR ALTER PROCEDURE Foo</c>
+    /// canonicalize to the same string. No-op when CREATE is not found or
+    /// OR ALTER is not present. Comments and string literals are skipped.
+    /// </summary>
+    internal static string StripCreateOrAlter(string ddl)
+    {
+        if (string.IsNullOrEmpty(ddl)) return string.Empty;
+
+        int n = ddl.Length;
+        int i = 0;
+
+        // Walk to the first significant CREATE keyword.
+        while (i < n)
+        {
+            char c = ddl[i];
+            char next = i + 1 < n ? ddl[i + 1] : '\0';
+
+            if (c == '\'')
+            {
+                i++;
+                while (i < n)
+                {
+                    if (ddl[i] == '\'' && i + 1 < n && ddl[i + 1] == '\'') i += 2;
+                    else if (ddl[i] == '\'') { i++; break; }
+                    else i++;
+                }
+                continue;
+            }
+            if (c == '-' && next == '-')
+            {
+                while (i < n && ddl[i] != '\n') i++;
+                continue;
+            }
+            if (c == '/' && next == '*')
+            {
+                i += 2;
+                while (i < n && !(ddl[i] == '*' && i + 1 < n && ddl[i + 1] == '/')) i++;
+                if (i < n) i += 2;
+                continue;
+            }
+            if ((c == 'C' || c == 'c')
+                && i + 6 <= n
+                && string.Equals(ddl.Substring(i, 6), "CREATE", StringComparison.OrdinalIgnoreCase)
+                && (i == 0 || !IsIdentChar(ddl[i - 1]))
+                && (i + 6 == n || !IsIdentChar(ddl[i + 6])))
+            {
+                int afterCreate = i + 6;
+                int j = afterCreate;
+                while (j < n && char.IsWhiteSpace(ddl[j])) j++;
+
+                // OR
+                if (j + 2 <= n
+                    && string.Equals(ddl.Substring(j, 2), "OR", StringComparison.OrdinalIgnoreCase)
+                    && (j + 2 == n || !IsIdentChar(ddl[j + 2])))
+                {
+                    int afterOr = j + 2;
+                    int k = afterOr;
+                    while (k < n && char.IsWhiteSpace(ddl[k])) k++;
+
+                    // ALTER
+                    if (k + 5 <= n
+                        && string.Equals(ddl.Substring(k, 5), "ALTER", StringComparison.OrdinalIgnoreCase)
+                        && (k + 5 == n || !IsIdentChar(ddl[k + 5])))
+                    {
+                        // Drop the "OR ALTER" tokens (inclusive of leading whitespace
+                        // since afterCreate's space is already in the prefix).
+                        return ddl.Substring(0, afterCreate) + ddl.Substring(k + 5);
+                    }
+                }
+                return ddl;
+            }
+            i++;
+        }
+        return ddl;
+    }
+
+    private static bool IsIdentChar(char c)
+        => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+        || (c >= '0' && c <= '9') || c == '_' || c == '@' || c == '#' || c == '$';
+
+    /// <summary>
+    /// Returns the first batch in a multi-batch DDL string that defines an
+    /// object of the requested type, stripped of any surrounding
+    /// <c>IF OBJECT_ID(…) IS NULL BEGIN … END</c> idempotency wrapper.
+    /// SMO scripts tables as SET / CREATE TABLE / ALTER TABLE constraint
+    /// stanzas (no wrapper); folder-mode files contain the CREATE inside
+    /// an IF wrapper. Comparison must collapse both forms to the bare CREATE
+    /// statement so a freshly-synced file doesn't flag as Modified.
+    /// </summary>
+    internal static string ExtractCreateBatch(string ddl, ObjectType expectedType)
+    {
+        if (string.IsNullOrEmpty(ddl)) return string.Empty;
+        var parsed = new SqlFileParser().Parse(ddl);
+        var match = parsed.FirstOrDefault(p => p.ObjectType == expectedType);
+        if (match == null) return ddl;
+        return StripIfNotExistsWrapper(match.Ddl);
+    }
+
+    /// <summary>
+    /// If the batch text starts with an <c>IF</c>-condition guard around a
+    /// CREATE statement, strips the guard and returns just the CREATE body.
+    /// Recognizes both single-statement IFs (<c>IF … CREATE TABLE …</c>) and
+    /// BEGIN/END block IFs. Returns the input unchanged when no IF wrapper
+    /// is present (e.g. SMO's bare CREATE TABLE batch).
+    /// </summary>
+    private static string StripIfNotExistsWrapper(string batch)
+    {
+        if (string.IsNullOrEmpty(batch)) return string.Empty;
+
+        int createIdx = FindCreateKeyword(batch);
+        if (createIdx < 0) return batch;
+        if (createIdx == 0) return batch; // no preamble to strip
+
+        // Verify the preamble is an IF guard (vs. say leading comments only —
+        // those should be preserved). Find the first significant keyword.
+        int probe = 0;
+        SkipInsignificantTokens(batch, ref probe);
+        if (probe >= batch.Length) return batch;
+        if (!IsKeywordAt(batch, probe, "IF")) return batch;
+
+        // Take from CREATE onwards, then trim a trailing END if it's the
+        // closer of a BEGIN/END block.
+        string fromCreate = batch.Substring(createIdx);
+        return TrimTrailingEnd(fromCreate);
+    }
+
+    private static int FindCreateKeyword(string text)
+    {
+        int n = text.Length;
+        int i = 0;
+        while (i < n)
+        {
+            char c = text[i];
+            char next = i + 1 < n ? text[i + 1] : '\0';
+
+            if (c == '\'')
+            {
+                i++;
+                while (i < n)
+                {
+                    if (text[i] == '\'' && i + 1 < n && text[i + 1] == '\'') i += 2;
+                    else if (text[i] == '\'') { i++; break; }
+                    else i++;
+                }
+                continue;
+            }
+            if (c == '[')
+            {
+                i++;
+                while (i < n)
+                {
+                    if (text[i] == ']' && i + 1 < n && text[i + 1] == ']') i += 2;
+                    else if (text[i] == ']') { i++; break; }
+                    else i++;
+                }
+                continue;
+            }
+            if (c == '-' && next == '-')
+            {
+                while (i < n && text[i] != '\n') i++;
+                continue;
+            }
+            if (c == '/' && next == '*')
+            {
+                i += 2;
+                while (i < n && !(text[i] == '*' && i + 1 < n && text[i + 1] == '/')) i++;
+                if (i < n) i += 2;
+                continue;
+            }
+            if (IsKeywordAt(text, i, "CREATE")) return i;
+            i++;
+        }
+        return -1;
+    }
+
+    private static void SkipInsignificantTokens(string text, ref int i)
+    {
+        int n = text.Length;
+        while (i < n)
+        {
+            char c = text[i];
+            if (char.IsWhiteSpace(c)) { i++; continue; }
+            if (c == '-' && i + 1 < n && text[i + 1] == '-')
+            {
+                while (i < n && text[i] != '\n') i++;
+                continue;
+            }
+            if (c == '/' && i + 1 < n && text[i + 1] == '*')
+            {
+                i += 2;
+                while (i < n && !(text[i] == '*' && i + 1 < n && text[i + 1] == '/')) i++;
+                if (i < n) i += 2;
+                continue;
+            }
+            break;
+        }
+    }
+
+    private static bool IsKeywordAt(string text, int pos, string keyword)
+    {
+        if (pos + keyword.Length > text.Length) return false;
+        if (pos > 0 && IsIdentChar(text[pos - 1])) return false;
+        if (pos + keyword.Length < text.Length && IsIdentChar(text[pos + keyword.Length])) return false;
+        for (int k = 0; k < keyword.Length; k++)
+        {
+            if (char.ToUpperInvariant(text[pos + k]) != char.ToUpperInvariant(keyword[k]))
+                return false;
+        }
+        return true;
+    }
+
+    private static string TrimTrailingEnd(string text)
+    {
+        string trimmed = text.TrimEnd();
+        if (trimmed.Length < 3) return trimmed;
+        if (!trimmed.EndsWith("END", StringComparison.OrdinalIgnoreCase)) return trimmed;
+        // Word boundary: char before END must not be an identifier char.
+        if (trimmed.Length > 3 && IsIdentChar(trimmed[trimmed.Length - 4])) return trimmed;
+        return trimmed.Substring(0, trimmed.Length - 3).TrimEnd();
     }
 
     /// <summary>
@@ -751,6 +1052,12 @@ public static class SchemaComparator
         }
 
         if (sb.Length > 0 && sb[sb.Length - 1] == ' ') sb.Length--;
+        // Optional trailing semicolon — see NormalizeDdl for the rationale.
+        while (sb.Length > 0 && sb[sb.Length - 1] == ';')
+        {
+            sb.Length--;
+            if (sb.Length > 0 && sb[sb.Length - 1] == ' ') sb.Length--;
+        }
         return sb.ToString();
     }
 

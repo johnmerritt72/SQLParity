@@ -6,13 +6,14 @@
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
     </UserControl.Resources>
     <DockPanel Margin="12">
-        <!-- Duplicate label warning -->
+        <!-- Validation warning (duplicate labels, same DB, connect failure, missing folder, etc.) -->
         <TextBlock DockPanel.Dock="Bottom"
-                   Text="{Binding DuplicateLabelWarning}"
+                   Text="{Binding ValidationWarning}"
                    Foreground="Red" FontWeight="SemiBold"
+                   TextWrapping="Wrap"
                    HorizontalAlignment="Right"
                    Margin="0,4,0,0"
-                   Visibility="{Binding HasDuplicateLabels, Converter={StaticResource BoolToVis}}" />
+                   Visibility="{Binding HasValidationWarning, Converter={StaticResource BoolToVis}}" />
 
         <!-- Object Type Filters (centered below both panels) -->
         <GroupBox DockPanel.Dock="Bottom" Header="Compare Object Types"
@@ -164,6 +165,54 @@
                     <TextBlock Text="Tag (auto-suggested)" Margin="0,0,0,2" />
                     <TextBlock Text="{Binding SideB.Tag}" FontStyle="Italic" Margin="0,0,0,8" />
 
+                    <!-- Mode selector: live database vs SSMS solution folder. -->
+                    <TextBlock Text="Source" FontWeight="SemiBold" Margin="0,0,0,2" />
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <RadioButton GroupName="SideBMode" Content="Database"
+                                     IsChecked="{Binding SideB.IsDatabaseMode}"
+                                     Margin="0,0,12,0" />
+                        <RadioButton GroupName="SideBMode" Content="Folder (SSMS Solution)"
+                                     IsChecked="{Binding SideB.IsFolderMode}"
+                                     IsEnabled="{Binding IsSolutionOpen}"
+                                     ToolTip="Open a SSMS Solution to enable folder mode." />
+                    </StackPanel>
+
+                    <!-- Folder-mode panel: displays the active solution directory.
+                         Hidden when SideB.IsDatabaseMode == true. -->
+                    <StackPanel>
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SideB.IsFolderMode}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="Solution Folder" Margin="0,0,0,2" />
+                        <TextBox Text="{Binding SideB.FolderPath, Mode=OneWay}"
+                                 IsReadOnly="True"
+                                 Background="#F5F5F5"
+                                 Margin="0,0,0,4" />
+                        <TextBlock Foreground="Gray" FontStyle="Italic"
+                                   TextWrapping="Wrap" Margin="0,0,0,8"
+                                   Text="Reading *.sql files at the root of this folder. Subfolders are ignored in v1.2." />
+                    </StackPanel>
+
+                    <!-- Database-mode panel: existing controls. Hidden when folder mode is on. -->
+                    <StackPanel>
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SideB.IsFolderMode}" Value="True">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+
                     <TextBlock Text="Server" Margin="0,0,0,2" />
                     <DockPanel Margin="0,0,0,8">
                         <Button DockPanel.Dock="Right" Content="Connect"
@@ -250,6 +299,7 @@
                                  Margin="0,0,0,8" />
                         <TextBlock Text="Password" Margin="0,0,0,2" />
                         <PasswordBox x:Name="PasswordB" Margin="0,0,0,8" />
+                    </StackPanel>
                     </StackPanel>
                 </StackPanel>
             </GroupBox>

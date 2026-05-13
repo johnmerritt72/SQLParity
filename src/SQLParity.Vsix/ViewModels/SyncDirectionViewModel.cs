@@ -17,20 +17,35 @@ namespace SQLParity.Vsix.ViewModels
         private SyncDirection _direction = SyncDirection.Unset;
         private string _labelA = string.Empty;
         private string _labelB = string.Empty;
+        private string _labelBWithDb = string.Empty;
         private EnvironmentTag _tagA;
         private EnvironmentTag _tagB;
+        private bool _isBtoADangerous;
+        private string _btoADangerExplanation = string.Empty;
 
         public SyncDirectionViewModel()
         {
             SetAtoBCommand = new RelayCommand(_ => Direction = SyncDirection.AtoB);
-            SetBtoACommand = new RelayCommand(_ => Direction = SyncDirection.BtoA);
+
+            // SetBtoACommand is blocked entirely when Side B is empty — flipping
+            // direction to B→A would queue a "drop everything on Side A" apply,
+            // which has no legitimate user intent.
+            SetBtoACommand = new RelayCommand(
+                _ => Direction = SyncDirection.BtoA,
+                _ => !IsBtoADangerous);
+
+            // FlipCommand is allowed only when:
+            //   - a direction is set (today's existing rule), and
+            //   - the flip would not land on B→A while it's flagged dangerous.
+            // (Flipping FROM B→A back TO A→B is always safe.)
             FlipCommand = new RelayCommand(_ =>
             {
                 if (Direction == SyncDirection.AtoB)
                     Direction = SyncDirection.BtoA;
                 else if (Direction == SyncDirection.BtoA)
                     Direction = SyncDirection.AtoB;
-            }, _ => Direction != SyncDirection.Unset);
+            }, _ => Direction != SyncDirection.Unset
+                    && !(Direction == SyncDirection.AtoB && IsBtoADangerous));
         }
 
         public SyncDirection Direction
@@ -159,13 +174,73 @@ namespace SQLParity.Vsix.ViewModels
 
         public event EventHandler DirectionChanged;
 
+        /// <summary>
+        /// Label + " (DatabaseName)" suffix for Side B's results-pane header.
+        /// Falls back to <see cref="LabelB"/> when the side is in folder mode
+        /// or has no database name.
+        /// </summary>
+        public string LabelBWithDb
+        {
+            get => _labelBWithDb;
+            private set => SetProperty(ref _labelBWithDb, value);
+        }
+
         public void PopulateFrom(ConnectionSideViewModel sideA, ConnectionSideViewModel sideB)
         {
             LabelA = sideA.Label;
             TagA = sideA.Tag;
             LabelB = sideB.Label;
             TagB = sideB.Tag;
+            LabelBWithDb = ComposeLabelWithDb(sideB);
             Direction = SyncDirection.Unset;
+        }
+
+        /// <summary>
+        /// True when applying the comparison in the B → A direction would drop
+        /// every object on Side A — i.e. Side B's loaded schema is empty.
+        /// While true, <see cref="SetBtoACommand"/> and the AtoB→BtoA branch of
+        /// <see cref="FlipCommand"/> report CanExecute=false. Set by
+        /// <see cref="ViewModels.ResultsViewModel.Populate"/> after each
+        /// comparison.
+        /// </summary>
+        public bool IsBtoADangerous
+        {
+            get => _isBtoADangerous;
+            set
+            {
+                if (SetProperty(ref _isBtoADangerous, value))
+                    OnPropertyChanged(nameof(BtoAToolTip));
+            }
+        }
+
+        /// <summary>
+        /// Human-readable reason the B → A button is disabled. Used as the
+        /// tooltip text for both the B→A button and the Flip button when
+        /// <see cref="IsBtoADangerous"/> is true. Empty string when there is
+        /// no current danger.
+        /// </summary>
+        public string BtoADangerExplanation
+        {
+            get => _btoADangerExplanation;
+            set
+            {
+                if (SetProperty(ref _btoADangerExplanation, value))
+                    OnPropertyChanged(nameof(BtoAToolTip));
+            }
+        }
+
+        /// <summary>
+        /// Tooltip exposed to the XAML for the B→A and Flip buttons.
+        /// Returns the explanation string when B→A is dangerous, otherwise
+        /// returns null so WPF skips rendering a tooltip entirely.
+        /// </summary>
+        public string BtoAToolTip => IsBtoADangerous ? _btoADangerExplanation : null;
+
+        private static string ComposeLabelWithDb(ConnectionSideViewModel side)
+        {
+            if (side.IsFolderMode || string.IsNullOrWhiteSpace(side.DatabaseName))
+                return side.Label;
+            return $"{side.Label} ({side.DatabaseName})";
         }
     }
 }

@@ -68,17 +68,48 @@ internal static class BulkTableMetadataReader
             });
 
             var key = (schema, name);
-            result.Add(new TableModel
+            var cols = columnsByTable.TryGetValue(key, out var c) ? c : new List<ColumnModel>();
+            var idxs = indexesByTable.TryGetValue(key, out var i) ? i : new List<IndexModel>();
+            var fks = fksByTable.TryGetValue(key, out var f) ? f : new List<ForeignKeyModel>();
+            var chks = checksByTable.TryGetValue(key, out var ch) ? ch : new List<CheckConstraintModel>();
+            var trigs = triggersByTable.TryGetValue(key, out var tr) ? tr : new List<TriggerModel>();
+
+            // Build a temporary TableModel to feed the generator (Ddl is what we're computing)
+            var modelForDdl = new TableModel
             {
                 Id = SchemaQualifiedName.TopLevel(schema, name),
                 Schema = schema,
                 Name = name,
-                Ddl = string.Empty, // Lazy-loaded on demand via ScriptTable()
-                Columns = columnsByTable.TryGetValue(key, out var cols) ? cols : new List<ColumnModel>(),
-                Indexes = indexesByTable.TryGetValue(key, out var idxs) ? idxs : new List<IndexModel>(),
-                ForeignKeys = fksByTable.TryGetValue(key, out var fks) ? fks : new List<ForeignKeyModel>(),
-                CheckConstraints = checksByTable.TryGetValue(key, out var chks) ? chks : new List<CheckConstraintModel>(),
-                Triggers = triggersByTable.TryGetValue(key, out var trigs) ? trigs : new List<TriggerModel>(),
+                Ddl = string.Empty,
+                Columns = cols,
+                Indexes = idxs,
+                ForeignKeys = fks,
+                CheckConstraints = chks,
+                Triggers = trigs,
+            };
+
+            string ddl;
+            try
+            {
+                ddl = SQLParity.Core.Comparison.CreateTableGenerator.Generate(modelForDdl);
+            }
+            catch (Exception ex)
+            {
+                // Defensive: a malformed table (e.g. zero columns) shouldn't crash the whole bulk read.
+                ddl = $"-- Could not script table [{schema}].[{name}]: {ex.Message}";
+            }
+
+            result.Add(new TableModel
+            {
+                Id = modelForDdl.Id,
+                Schema = schema,
+                Name = name,
+                Ddl = ddl,
+                Columns = cols,
+                Indexes = idxs,
+                ForeignKeys = fks,
+                CheckConstraints = chks,
+                Triggers = trigs,
             });
         }
 

@@ -404,4 +404,41 @@ public class CreateTableGeneratorTests
         var ex = Assert.Throws<InvalidOperationException>(() => CreateTableGenerator.Generate(table));
         Assert.Contains("[dbo].[T]", ex.Message);
     }
+
+    [Fact]
+    public void Generate_strips_auto_generated_default_constraint_name()
+    {
+        var col = Col("CurveTypeID", dataType: "int", nullable: false,
+            defaultConstraint: new DefaultConstraintModel
+            {
+                Name = "DF__AlcoholSi__Curve_51A50FA1",
+                Definition = "((1))",
+            },
+            ordinal: 0);
+        var table = MakeTable("dbo", "AlcoholSimulations", new[] { col });
+
+        var ddl = CreateTableGenerator.Generate(table);
+
+        Assert.DoesNotContain("DF__AlcoholSi__Curve_51A50FA1", ddl);
+        Assert.Contains("DEFAULT ((1))", ddl);
+        // The CONSTRAINT keyword should be entirely absent for this auto-gen name
+        Assert.DoesNotContain("CONSTRAINT [DF__", ddl);
+    }
+
+    [Fact]
+    public void Generate_preserves_user_named_default_constraint()
+    {
+        var col = Col("IsActive", dataType: "bit", nullable: false,
+            defaultConstraint: new DefaultConstraintModel
+            {
+                Name = "DF_AlcoholSimulations_IsActive",
+                Definition = "((1))",
+            },
+            ordinal: 0);
+        var table = MakeTable("dbo", "AlcoholSimulations", new[] { col });
+
+        var ddl = CreateTableGenerator.Generate(table);
+
+        Assert.Contains("CONSTRAINT [DF_AlcoholSimulations_IsActive] DEFAULT ((1))", ddl);
+    }
 }

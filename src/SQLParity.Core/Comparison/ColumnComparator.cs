@@ -100,6 +100,8 @@ public static class ColumnComparator
     {
         if (a is null && b is null) return true;
         if (a is null || b is null) return false;
-        return string.Equals(a.Definition, b.Definition, StringComparison.Ordinal);
+        var canonA = SQLParity.Core.Parsing.ExpressionCanonicalizer.Canonicalize(a.Definition);
+        var canonB = SQLParity.Core.Parsing.ExpressionCanonicalizer.Canonicalize(b.Definition);
+        return string.Equals(canonA, canonB, StringComparison.OrdinalIgnoreCase);
     }
 }

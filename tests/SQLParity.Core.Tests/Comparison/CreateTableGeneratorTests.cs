@@ -210,21 +210,23 @@ public class CreateTableGeneratorTests
             Col("CreatedAt", "datetime", defaultConstraint: def),
         });
         var ddl = CreateTableGenerator.Generate(table);
-        Assert.Contains("[CreatedAt] [datetime] NOT NULL CONSTRAINT [DF_T_CreatedAt] DEFAULT (getdate())", ddl);
+        Assert.Contains("[CreatedAt] [datetime] NOT NULL CONSTRAINT [DF_T_CreatedAt] DEFAULT getdate()", ddl);
     }
 
     [Fact]
     public void DefaultConstraint_DefinitionAlreadyParenthesized_NotDoubleWrapped()
     {
         // sys.default_constraints.definition typically arrives already wrapped in (),
-        // e.g. "((0))" for "DEFAULT 0". Don't add another layer.
+        // e.g. "((0))" for "DEFAULT 0". The canonicalizer strips the redundant parens
+        // and emits the minimal form.
         var def = new DefaultConstraintModel { Name = "DF_T_Count", Definition = "((0))" };
         var table = MakeTable("dbo", "T", new[]
         {
             Col("Count", "int", defaultConstraint: def),
         });
         var ddl = CreateTableGenerator.Generate(table);
-        Assert.Contains("CONSTRAINT [DF_T_Count] DEFAULT ((0))", ddl);
+        Assert.Contains("CONSTRAINT [DF_T_Count] DEFAULT 0", ddl);
+        Assert.DoesNotContain("DEFAULT ((0))", ddl);
         Assert.DoesNotContain("DEFAULT (((0)))", ddl);
     }
 
@@ -365,7 +367,7 @@ public class CreateTableGeneratorTests
             checks: new[] { Check("CK_T_Value", "([Value]>=(0))") });
         var ddl = CreateTableGenerator.Generate(table);
         Assert.Contains("[Value] [int] NOT NULL,", ddl);
-        Assert.Contains("CONSTRAINT [CK_T_Value] CHECK ([Value]>=(0))", ddl);
+        Assert.Contains("CONSTRAINT [CK_T_Value] CHECK ([Value] >= (0))", ddl);
     }
 
     [Fact]
@@ -379,10 +381,10 @@ public class CreateTableGeneratorTests
                 Check("CK_T_B", "([B]<>(0))"),
             });
         var ddl = CreateTableGenerator.Generate(table);
-        Assert.Contains("CONSTRAINT [CK_T_A] CHECK ([A]>(0))," + Environment.NewLine, ddl);
-        Assert.Contains("CONSTRAINT [CK_T_B] CHECK ([B]<>(0))", ddl);
+        Assert.Contains("CONSTRAINT [CK_T_A] CHECK ([A] > (0))," + Environment.NewLine, ddl);
+        Assert.Contains("CONSTRAINT [CK_T_B] CHECK ([B] <> (0))", ddl);
         // Last constraint has no trailing comma
-        Assert.DoesNotContain("CHECK ([B]<>(0))," + Environment.NewLine, ddl);
+        Assert.DoesNotContain("CHECK ([B] <> (0))," + Environment.NewLine, ddl);
     }
 
     [Fact]
@@ -394,7 +396,7 @@ public class CreateTableGeneratorTests
             checks: new[] { Check("CK_T_Id", "([Id]>(0))") });
         var ddl = CreateTableGenerator.Generate(table);
         Assert.Contains("CONSTRAINT [PK_T] PRIMARY KEY CLUSTERED ([Id] ASC)," + Environment.NewLine, ddl);
-        Assert.Contains("CONSTRAINT [CK_T_Id] CHECK ([Id]>(0))", ddl);
+        Assert.Contains("CONSTRAINT [CK_T_Id] CHECK ([Id] > (0))", ddl);
     }
 
     [Fact]
@@ -420,7 +422,7 @@ public class CreateTableGeneratorTests
         var ddl = CreateTableGenerator.Generate(table);
 
         Assert.DoesNotContain("DF__AlcoholSi__Curve_51A50FA1", ddl);
-        Assert.Contains("DEFAULT ((1))", ddl);
+        Assert.Contains("DEFAULT 1", ddl);
         // The CONSTRAINT keyword should be entirely absent for this auto-gen name
         Assert.DoesNotContain("CONSTRAINT [DF__", ddl);
     }
@@ -439,7 +441,7 @@ public class CreateTableGeneratorTests
 
         var ddl = CreateTableGenerator.Generate(table);
 
-        Assert.Contains("CONSTRAINT [DF_AlcoholSimulations_IsActive] DEFAULT ((1))", ddl);
+        Assert.Contains("CONSTRAINT [DF_AlcoholSimulations_IsActive] DEFAULT 1", ddl);
     }
 
     [Fact]

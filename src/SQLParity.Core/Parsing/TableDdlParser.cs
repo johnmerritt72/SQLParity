@@ -98,6 +98,13 @@ public sealed class TableDdlParser
             }
         }
 
+        // Sibling CREATE INDEX and ALTER TABLE ADD CONSTRAINT statements
+        var siblingVisitor = new SiblingStatementCollector(schema, name);
+        fragment.Accept(siblingVisitor);
+        foreach (var idx in siblingVisitor.Indexes) indexes.Add(idx);
+        foreach (var fk in siblingVisitor.ForeignKeys) foreignKeys.Add(fk);
+        foreach (var ck in siblingVisitor.CheckConstraints) checkConstraints.Add(ck);
+
         return new TableModel
         {
             Id = id,
@@ -433,6 +440,113 @@ public sealed class TableDdlParser
         public override void Visit(CreateTableStatement node)
         {
             if (Found == null) Found = node;
+        }
+    }
+
+    private sealed class SiblingStatementCollector : TSqlFragmentVisitor
+    {
+        private readonly string _schema;
+        private readonly string _table;
+        public List<IndexModel> Indexes { get; } = new();
+        public List<ForeignKeyModel> ForeignKeys { get; } = new();
+        public List<CheckConstraintModel> CheckConstraints { get; } = new();
+
+        public SiblingStatementCollector(string schema, string table)
+        {
+            _schema = schema;
+            _table = table;
+        }
+
+        public override void Visit(CreateIndexStatement node)
+        {
+            if (!TargetsThisTable(node.OnName)) return;
+
+            var cols = new List<IndexedColumnModel>();
+            if (node.Columns != null)
+            {
+                foreach (var c in node.Columns)
+                {
+                    cols.Add(new IndexedColumnModel
+                    {
+                        Name = c.Column.MultiPartIdentifier.Identifiers[^1].Value,
+                        IsDescending = c.SortOrder == SortOrder.Descending,
+                        IsIncluded = false,
+                    });
+                }
+            }
+            if (node.IncludeColumns != null)
+            {
+                foreach (var c in node.IncludeColumns)
+                {
+                    cols.Add(new IndexedColumnModel
+                    {
+                        Name = c.MultiPartIdentifier.Identifiers[^1].Value,
+                        IsDescending = false,
+                        IsIncluded = true,
+                    });
+                }
+            }
+
+            string indexName = node.Name?.Value ?? string.Empty;
+            bool clustered = node.Clustered.HasValue && node.Clustered.Value;
+            bool unique = node.Unique;
+
+            Indexes.Add(new IndexModel
+            {
+                Id = SchemaQualifiedName.Child(_schema, _table, indexName),
+                Name = indexName,
+                IndexType = clustered ? "CLUSTERED" : "NONCLUSTERED",
+                IsClustered = clustered,
+                IsUnique = unique,
+                IsPrimaryKey = false,
+                IsUniqueConstraint = false,
+                HasFilter = node.FilterPredicate != null,
+                FilterDefinition = node.FilterPredicate != null
+                    ? RoundTripExpression(node.FilterPredicate)
+                    : null,
+                Columns = cols,
+                Ddl = string.Empty,
+            });
+        }
+
+        public override void Visit(AlterTableAddTableElementStatement node)
+        {
+            if (!TargetsThisTable(node.SchemaObjectName)) return;
+            if (node.Definition?.TableConstraints == null) return;
+
+            foreach (var c in node.Definition.TableConstraints)
+            {
+                switch (c)
+                {
+                    case CheckConstraintDefinition chk:
+                        CheckConstraints.Add(MapCheckConstraint(chk, _schema, _table));
+                        break;
+                    case ForeignKeyConstraintDefinition fk:
+                        ForeignKeys.Add(MapForeignKey(fk, _schema, _table, singleColumnInline: null));
+                        break;
+                    case UniqueConstraintDefinition uniq:
+                        Indexes.Add(MapUniqueAsIndex(uniq, _schema, _table, singleColumnInline: null));
+                        break;
+                }
+            }
+        }
+
+        private bool TargetsThisTable(SchemaObjectName? target)
+        {
+            if (target?.Identifiers == null || target.Identifiers.Count == 0) return false;
+            string targetName = target.Identifiers[^1].Value;
+            if (!string.Equals(targetName, _table, System.StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            // Schema match: if the target spelled a schema, it must match _schema;
+            // if not (bare table name), assume it targets our table.
+            if (target.Identifiers.Count >= 2)
+            {
+                string targetSchema = target.Identifiers[target.Identifiers.Count - 2].Value;
+                if (!string.Equals(targetSchema, _schema, System.StringComparison.OrdinalIgnoreCase))
+                    return false;
+            }
+            return true;
         }
     }
 }

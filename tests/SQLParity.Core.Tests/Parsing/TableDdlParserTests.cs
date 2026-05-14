@@ -248,4 +248,92 @@ public class TableDdlParserTests
         Assert.Equal("CustomerID", result.ForeignKeys[0].Columns[0].LocalColumn);
         Assert.Equal("Id", result.ForeignKeys[0].Columns[0].ReferencedColumn);
     }
+
+    [Fact]
+    public void Parse_includes_sibling_create_index_inside_if_wrapper()
+    {
+        var parser = MakeParser();
+        var result = parser.Parse(
+            @"IF OBJECT_ID('dbo.T', 'U') IS NULL
+              BEGIN
+                CREATE TABLE dbo.T (
+                    Id INT IDENTITY(1,1) PRIMARY KEY,
+                    SerialNumber INT NOT NULL,
+                    IsActive BIT NOT NULL DEFAULT 1
+                );
+
+                CREATE NONCLUSTERED INDEX IX_T_SerialNumber_Active
+                ON dbo.T (SerialNumber, IsActive)
+                INCLUDE (Id);
+              END",
+            "dbo", "T", null, out _);
+
+        Assert.NotNull(result);
+        // 1 PK index from inline column + 1 sibling nonclustered index
+        Assert.Equal(2, result!.Indexes.Count);
+
+        var ix = System.Linq.Enumerable.Single(result.Indexes,
+            i => i.Name == "IX_T_SerialNumber_Active");
+        Assert.False(ix.IsClustered);
+        Assert.False(ix.IsPrimaryKey);
+        Assert.Equal(2, System.Linq.Enumerable.Count(ix.Columns, c => !c.IsIncluded));
+        Assert.Equal(1, System.Linq.Enumerable.Count(ix.Columns, c => c.IsIncluded));
+    }
+
+    [Fact]
+    public void Parse_includes_sibling_alter_table_check_constraint()
+    {
+        var parser = MakeParser();
+        var result = parser.Parse(
+            @"CREATE TABLE dbo.T (Age INT NOT NULL);
+              ALTER TABLE dbo.T ADD CONSTRAINT CK_T_Age CHECK (Age > 0);",
+            "dbo", "T", null, out _);
+
+        Assert.NotNull(result);
+        Assert.Single(result!.CheckConstraints);
+        Assert.Equal("CK_T_Age", result.CheckConstraints[0].Name);
+    }
+
+    [Fact]
+    public void Parse_includes_sibling_alter_table_foreign_key()
+    {
+        var parser = MakeParser();
+        var result = parser.Parse(
+            @"CREATE TABLE dbo.T (CustomerID INT NOT NULL);
+              ALTER TABLE dbo.T ADD CONSTRAINT FK_T_Customer
+              FOREIGN KEY (CustomerID) REFERENCES dbo.Customer (Id);",
+            "dbo", "T", null, out _);
+
+        Assert.NotNull(result);
+        Assert.Single(result!.ForeignKeys);
+        Assert.Equal("FK_T_Customer", result.ForeignKeys[0].Name);
+        Assert.Equal("Customer", result.ForeignKeys[0].ReferencedTableName);
+    }
+
+    [Fact]
+    public void Parse_ignores_sibling_alter_table_targeting_different_table()
+    {
+        var parser = MakeParser();
+        var result = parser.Parse(
+            @"CREATE TABLE dbo.T (CustomerID INT NOT NULL);
+              ALTER TABLE dbo.OtherTable ADD CONSTRAINT FK_Other_Customer
+              FOREIGN KEY (CustomerID) REFERENCES dbo.Customer (Id);",
+            "dbo", "T", null, out _);
+
+        Assert.NotNull(result);
+        Assert.Empty(result!.ForeignKeys);
+    }
+
+    [Fact]
+    public void Parse_ignores_sibling_create_index_on_different_table()
+    {
+        var parser = MakeParser();
+        var result = parser.Parse(
+            @"CREATE TABLE dbo.T (SerialNumber INT NOT NULL);
+              CREATE INDEX IX_Other ON dbo.OtherTable (SerialNumber);",
+            "dbo", "T", null, out _);
+
+        Assert.NotNull(result);
+        Assert.Empty(result!.Indexes);
+    }
 }

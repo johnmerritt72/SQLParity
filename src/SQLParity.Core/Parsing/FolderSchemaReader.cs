@@ -242,7 +242,8 @@ public sealed class FolderSchemaReader
                 };
 
                 AddToBucket(obj, tables, views, procs, functions,
-                    sequences, synonyms, udts, tableTypes, schemas);
+                    sequences, synonyms, udts, tableTypes, schemas,
+                    warnings, filePath);
             }
         }
 
@@ -295,24 +296,49 @@ public sealed class FolderSchemaReader
         List<SynonymModel> synonyms,
         List<UserDefinedDataTypeModel> udts,
         List<UserDefinedTableTypeModel> tableTypes,
-        List<SchemaModel> schemas)
+        List<SchemaModel> schemas,
+        List<string> warnings,
+        string filePath)
     {
         switch (obj.ObjectType)
         {
             case ObjectType.Table:
-                tables.Add(new TableModel
+            {
+                var tableParser = new TableDdlParser();
+                var structured = tableParser.Parse(
+                    obj.Ddl,
+                    obj.Id.Schema,
+                    obj.Id.Name,
+                    obj.TargetDatabase,
+                    out var parseWarnings);
+
+                if (parseWarnings.Count > 0)
                 {
-                    Id = obj.Id,
-                    Schema = obj.Id.Schema,
-                    Name = obj.Id.Name,
-                    Ddl = obj.Ddl,
-                    Columns = Array.Empty<ColumnModel>(),
-                    Indexes = Array.Empty<IndexModel>(),
-                    ForeignKeys = Array.Empty<ForeignKeyModel>(),
-                    CheckConstraints = Array.Empty<CheckConstraintModel>(),
-                    Triggers = Array.Empty<TriggerModel>(),
-                });
+                    foreach (var w in parseWarnings)
+                        warnings.Add($"{Path.GetFileName(filePath)}: {w}");
+                }
+
+                if (structured != null)
+                {
+                    tables.Add(structured);
+                }
+                else
+                {
+                    tables.Add(new TableModel
+                    {
+                        Id = obj.Id,
+                        Schema = obj.Id.Schema,
+                        Name = obj.Id.Name,
+                        Ddl = obj.Ddl,
+                        Columns = Array.Empty<ColumnModel>(),
+                        Indexes = Array.Empty<IndexModel>(),
+                        ForeignKeys = Array.Empty<ForeignKeyModel>(),
+                        CheckConstraints = Array.Empty<CheckConstraintModel>(),
+                        Triggers = Array.Empty<TriggerModel>(),
+                    });
+                }
                 break;
+            }
             case ObjectType.View:
                 views.Add(new ViewModel
                 {

@@ -201,17 +201,19 @@ public class FolderSchemaReaderTests
     }
 
     [Fact]
-    public void TableModel_HasEmptyStructuralFieldsInFolderMode()
+    public void TableModel_HasStructuralFieldsPopulatedInFolderMode()
     {
-        // Folder mode is DDL-text-only; columns/indexes/etc. must be empty
-        // so the comparator's column-level diff produces no spurious changes.
+        // Folder mode now parses CREATE TABLE via TableDdlParser; columns and
+        // constraints are fully populated, matching what a live-DB read would return.
         using var t = new TempFolder();
         t.WriteFile("TABLE.dbo.Orders.sql", "CREATE TABLE dbo.Orders (Id INT NOT NULL, Total DECIMAL(10,2))");
 
         var result = Reader.ReadFolder(t.Path, "srv", "db");
 
         var table = Assert.Single(result.Schema.Tables);
-        Assert.Empty(table.Columns);
+        Assert.Equal(2, table.Columns.Count);
+        Assert.Equal("Id", table.Columns[0].Name);
+        Assert.Equal("Total", table.Columns[1].Name);
         Assert.Empty(table.Indexes);
         Assert.Empty(table.ForeignKeys);
         Assert.Empty(table.CheckConstraints);
@@ -384,5 +386,48 @@ public class FolderSchemaReaderTests
             Assert.False(backing.IsSingleObjectFile);
             Assert.Null(backing.FileName);
         }
+    }
+
+    [Fact]
+    public void ReadFolder_populates_table_columns_from_create_table_file()
+    {
+        using var t = new TempFolder();
+        t.WriteFile("TABLE.dbo.Customer.sql",
+            @"CREATE TABLE dbo.Customer (
+                Id INT IDENTITY(1,1) PRIMARY KEY,
+                Name NVARCHAR(50) NOT NULL,
+                IsActive BIT NOT NULL DEFAULT 1
+              );");
+
+        var result = Reader.ReadFolder(t.Path, "srv", "TestDb");
+
+        var table = Assert.Single(result.Schema.Tables);
+        Assert.Equal(3, table.Columns.Count);
+        Assert.Equal("Id", table.Columns[0].Name);
+        Assert.True(table.Columns[0].IsIdentity);
+        Assert.Single(table.Indexes); // inline PK from "Id INT ... PRIMARY KEY"
+        Assert.True(table.Indexes[0].IsPrimaryKey);
+    }
+
+    [Fact]
+    public void ReadFolder_falls_back_to_text_only_on_parse_failure_with_warning()
+    {
+        using var t = new TempFolder();
+        // Filename looks like a table file so SqlFileParser routes it to ObjectType.Table,
+        // but the body is junk so ScriptDom will choke.
+        t.WriteFile("TABLE.dbo.Broken.sql",
+            "CREATE TABLE dbo.Broken ( Id INT %%%INVALID%%% );");
+
+        var result = Reader.ReadFolder(t.Path, "srv", "TestDb");
+
+        // The table should still appear in results (text-only fallback)
+        var table = Assert.Single(result.Schema.Tables);
+        Assert.Empty(table.Columns); // structurally empty (parse failed)
+        Assert.False(string.IsNullOrEmpty(table.Ddl)); // text fallback
+
+        // Warning was surfaced via the ParseWarnings channel
+        Assert.Contains(result.Context.ParseWarnings,
+            w => w.Contains("Could not parse") || w.Contains("falling back",
+                System.StringComparison.OrdinalIgnoreCase));
     }
 }

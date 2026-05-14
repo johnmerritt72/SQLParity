@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using SQLParity.Core.Comparison;
 using SQLParity.Core.Model;
+using SQLParity.Core.Parsing;
 using Xunit;
 
 namespace SQLParity.Core.Tests.Comparison;
@@ -1051,5 +1052,96 @@ public class SchemaComparatorTests
             ignoreOptionalBrackets: true);
 
         Assert.Single(result.Changes);
+    }
+
+    [Fact]
+    public void Compare_table_with_one_added_column_produces_minimal_canonical_diff()
+    {
+        // Side B = folder side: parses an AlcoholSimulations-style file via TableDdlParser
+        string folderDdl = @"
+        IF OBJECT_ID('dbo.AlcoholSimulations', 'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.AlcoholSimulations (
+                ID INT IDENTITY(1,1) PRIMARY KEY,
+                SerialNumber INT NOT NULL,
+                IsActive BIT NOT NULL DEFAULT 1
+            );
+        END";
+        var folderTable = new TableDdlParser().Parse(
+            folderDdl, "dbo", "AlcoholSimulations", null, out _);
+        Assert.NotNull(folderTable);
+
+        // Side A = live DB: same columns plus a new SimulateTampers column.
+        var dbColumns = new System.Collections.Generic.List<ColumnModel>(folderTable!.Columns)
+        {
+            new ColumnModel
+            {
+                Id = SchemaQualifiedName.Child("dbo", "AlcoholSimulations", "SimulateTampers"),
+                Name = "SimulateTampers",
+                DataType = "tinyint",
+                MaxLength = 0,
+                Precision = 0,
+                Scale = 0,
+                IsNullable = false,
+                IsIdentity = false,
+                IdentitySeed = 0,
+                IdentityIncrement = 0,
+                IsComputed = false,
+                ComputedText = null,
+                IsPersisted = false,
+                Collation = null,
+                DefaultConstraint = new DefaultConstraintModel
+                {
+                    Name = "DF__AlcoholSi__Simul_61DB776A",
+                    Definition = "((0))",
+                },
+                OrdinalPosition = folderTable.Columns.Count,
+            }
+        };
+        var dbTable = new TableModel
+        {
+            Id = folderTable.Id,
+            Schema = folderTable.Schema,
+            Name = folderTable.Name,
+            Ddl = "",
+            Columns = dbColumns,
+            Indexes = folderTable.Indexes,
+            ForeignKeys = folderTable.ForeignKeys,
+            CheckConstraints = folderTable.CheckConstraints,
+            Triggers = Array.Empty<TriggerModel>(),
+        };
+
+        var sideA = WithTables(EmptySchema("DbA"), dbTable);
+        var sideB = WithTables(EmptySchema("DbB"), folderTable);
+
+        var result = SchemaComparator.Compare(sideA, sideB);
+
+        var change = System.Linq.Enumerable.Single(result.Changes,
+            c => c.ObjectType == ObjectType.Table);
+        Assert.Equal(ChangeStatus.Modified, change.Status);
+
+        // Exactly one column change: SimulateTampers added on A side
+        Assert.Single(change.ColumnChanges);
+        Assert.Equal("SimulateTampers", change.ColumnChanges[0].ColumnName);
+        Assert.Equal(ChangeStatus.New, change.ColumnChanges[0].Status);
+
+        // Canonical DDL on both sides differs only by the SimulateTampers line.
+        // (Compare line-by-line, ignoring trailing-comma alignment edits which
+        // we'd expect on the last "real" column row whose siblings changed.)
+        var linesA = change.DdlSideA!.Split('\n');
+        var linesB = change.DdlSideB!.Split('\n');
+        int diffCount = 0;
+        int max = System.Math.Max(linesA.Length, linesB.Length);
+        for (int i = 0; i < max; i++)
+        {
+            string a = i < linesA.Length ? linesA[i].Trim().TrimEnd(',') : "";
+            string b = i < linesB.Length ? linesB[i].Trim().TrimEnd(',') : "";
+            if (!string.Equals(a, b, StringComparison.OrdinalIgnoreCase))
+                diffCount++;
+        }
+        // We expect the SimulateTampers row plus the two shifted lines
+        // (the PK constraint and closing paren shift position when a column is
+        // inserted before them in a line-by-line positional comparison).
+        Assert.True(diffCount <= 3, $"Expected near-minimal diff; got {diffCount} differing lines.");
     }
 }

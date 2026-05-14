@@ -305,12 +305,15 @@ public static class SchemaComparator
         {
             if (!dictB.ContainsKey(kvpA.Key))
             {
+                string ddl = kvpA.Value.Columns.Count > 0
+                    ? CreateTableGenerator.Generate(kvpA.Value)
+                    : kvpA.Value.Ddl;
                 yield return new Change
                 {
                     Id = kvpA.Value.Id,
                     ObjectType = ObjectType.Table,
                     Status = ChangeStatus.New,
-                    DdlSideA = kvpA.Value.Ddl,
+                    DdlSideA = ddl,
                     DdlSideB = null,
                     ColumnChanges = Array.Empty<ColumnChange>(),
                 };
@@ -322,13 +325,16 @@ public static class SchemaComparator
         {
             if (!dictA.ContainsKey(kvpB.Key))
             {
+                string ddl = kvpB.Value.Columns.Count > 0
+                    ? CreateTableGenerator.Generate(kvpB.Value)
+                    : kvpB.Value.Ddl;
                 yield return new Change
                 {
                     Id = kvpB.Value.Id,
                     ObjectType = ObjectType.Table,
                     Status = ChangeStatus.Dropped,
                     DdlSideA = null,
-                    DdlSideB = kvpB.Value.Ddl,
+                    DdlSideB = ddl,
                     ColumnChanges = Array.Empty<ColumnChange>(),
                 };
             }
@@ -344,7 +350,17 @@ public static class SchemaComparator
                     tableA.Id.Schema, tableA.Name,
                     tableA.Columns, tableB.Columns);
 
-                bool ddlDiffers = !string.Equals(ddlNormalizer(tableA.Ddl), ddlNormalizer(tableB.Ddl), StringComparison.Ordinal);
+                // Canonical regen on both sides when both have structural data.
+                // Falls back to raw DDL (today's behavior) when either side's
+                // columns were stubbed — typically a parse-failure file.
+                bool bothStructural = tableA.Columns.Count > 0 && tableB.Columns.Count > 0;
+                string ddlA = bothStructural ? CreateTableGenerator.Generate(tableA) : tableA.Ddl;
+                string ddlB = bothStructural ? CreateTableGenerator.Generate(tableB) : tableB.Ddl;
+
+                bool ddlDiffers = !string.Equals(
+                    ddlNormalizer(ddlA),
+                    ddlNormalizer(ddlB),
+                    StringComparison.Ordinal);
 
                 if (ddlDiffers || columnChanges.Count > 0)
                 {
@@ -353,8 +369,8 @@ public static class SchemaComparator
                         Id = tableA.Id,
                         ObjectType = ObjectType.Table,
                         Status = ChangeStatus.Modified,
-                        DdlSideA = tableA.Ddl,
-                        DdlSideB = tableB.Ddl,
+                        DdlSideA = ddlA,
+                        DdlSideB = ddlB,
                         ColumnChanges = columnChanges,
                     };
                 }

@@ -79,4 +79,22 @@ public sealed class Change
     /// backs it yet). Set by the host VM during the per-DB merge.
     /// </summary>
     public string? SourceFilePath { get; set; }
+
+    /// <summary>
+    /// File-derived names of orphan-counterpart candidates for this orphan Change
+    /// in a folder-vs-DB comparison. Populated by SchemaComparator's post-pass
+    /// when a folder-side DROP's file name matches a DB-side orphan NEW's name
+    /// (or vice versa). Empty when no candidates. Used by the UI to offer a
+    /// "looks like a typo — pair them?" hint.
+    /// </summary>
+    public List<string> RenameCandidateNames { get; set; } = new();
+
+    /// <summary>
+    /// When the user has paired this Change with another via the typo-rename
+    /// hint, the original Id.Name of the partner that was collapsed in.
+    /// Null when this Change isn't a pair result. ScriptGenerator uses this
+    /// to rewrite the CREATE name token in DdlSideB to use Id.Name (the DB's
+    /// correct name) at apply time.
+    /// </summary>
+    public string? PairedFromName { get; set; }
 }

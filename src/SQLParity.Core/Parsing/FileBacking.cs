@@ -10,4 +10,13 @@ public sealed class FileBacking
 {
     public required string FilePath { get; init; }
     public required bool IsSingleObjectFile { get; init; }
+
+    /// <summary>
+    /// Object name derived from the file basename, e.g. "EndOfCallEvent_Insert"
+    /// from "PROC_Protech.centurion.EndOfCallEvent_Insert.sql". Null when the
+    /// file contained multiple CREATE batches — the file name can't represent
+    /// any single object in that case. Used by the comparator to detect
+    /// filename-vs-CREATE-name typo mismatches.
+    /// </summary>
+    public string? FileName { get; init; }
 }

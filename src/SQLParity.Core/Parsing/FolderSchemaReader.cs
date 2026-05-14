@@ -26,6 +26,20 @@ public sealed class FolderSchemaReader
     }
 
     /// <summary>
+    /// Derives an object name from a .sql file's basename. Strips the extension,
+    /// then returns everything after the last dot — supports both plain names
+    /// ("MyProc.sql") and the schema-qualified convention used by folder-sync
+    /// writers ("PROC_Db.schema.Name.sql" → "Name").
+    /// </summary>
+    public static string ExtractObjectNameFromFile(string fileNameOrPath)
+    {
+        string baseName = Path.GetFileNameWithoutExtension(fileNameOrPath ?? string.Empty);
+        if (string.IsNullOrEmpty(baseName)) return string.Empty;
+        int lastDot = baseName.LastIndexOf('.');
+        return lastDot >= 0 ? baseName.Substring(lastDot + 1) : baseName;
+    }
+
+    /// <summary>
     /// Scans <paramref name="folderPath"/> for *.sql files and parses each.
     /// </summary>
     /// <param name="folderPath">Absolute folder path. Must exist.</param>
@@ -224,6 +238,7 @@ public sealed class FolderSchemaReader
                 {
                     FilePath = filePath,
                     IsSingleObjectFile = isSingleObjectFile,
+                    FileName = isSingleObjectFile ? ExtractObjectNameFromFile(filePath) : null,
                 };
 
                 AddToBucket(obj, tables, views, procs, functions,

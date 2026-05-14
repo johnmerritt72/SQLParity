@@ -339,4 +339,50 @@ public class FolderSchemaReaderTests
         Assert.Contains("-- Header comment 2", proc.Ddl);
         Assert.Contains("CREATE PROC dbo.A", proc.Ddl);
     }
+
+    [Theory]
+    [InlineData("PROC_Protech.centurion.EndOfCallEvent_Insert.sql", "EndOfCallEvent_Insert")]
+    [InlineData("dbo.MyProc.sql", "MyProc")]
+    [InlineData("MyProc.sql", "MyProc")]
+    [InlineData("VIEW_Db.schema.v_Customers.sql", "v_Customers")]
+    public void ExtractObjectNameFromFile_ReturnsRightmostDotSegment(string fileName, string expected)
+    {
+        var actual = FolderSchemaReader.ExtractObjectNameFromFile(fileName);
+        Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public void ReadFolder_SingleObjectFile_PopulatesFileBackingFileName()
+    {
+        using var t = new TempFolder();
+        t.WriteFile("dbo.Foo.sql",
+            "CREATE PROCEDURE dbo.Foo AS BEGIN SELECT 1 END");
+
+        var result = Reader.ReadFolder(t.Path, "srv", "db");
+
+        var proc = Assert.Single(result.Schema.StoredProcedures);
+        var backing = result.Context.ObjectToFile[proc.Id];
+        Assert.True(backing.IsSingleObjectFile);
+        Assert.Equal("Foo", backing.FileName);
+    }
+
+    [Fact]
+    public void ReadFolder_MultiObjectFile_LeavesFileBackingFileNameNull()
+    {
+        using var t = new TempFolder();
+        t.WriteFile("Two.sql",
+            "CREATE PROCEDURE dbo.A AS BEGIN SELECT 1 END" + Environment.NewLine +
+            "GO" + Environment.NewLine +
+            "CREATE PROCEDURE dbo.B AS BEGIN SELECT 2 END");
+
+        var result = Reader.ReadFolder(t.Path, "srv", "db");
+
+        Assert.Equal(2, result.Schema.StoredProcedures.Count);
+        foreach (var proc in result.Schema.StoredProcedures)
+        {
+            var backing = result.Context.ObjectToFile[proc.Id];
+            Assert.False(backing.IsSingleObjectFile);
+            Assert.Null(backing.FileName);
+        }
+    }
 }

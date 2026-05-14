@@ -261,6 +261,62 @@
                                         </Style>
                                     </TextBlock.Style>
                                 </TextBlock>
+
+                                <!-- Typo-rename pair: warning glyph (shown when filename != CREATE name and a pair candidate exists) -->
+                                <TextBlock Text="⚠"
+                                           Margin="6,0,0,0" FontSize="10" FontWeight="Bold"
+                                           Foreground="#F9A825"
+                                           VerticalAlignment="Center"
+                                           ToolTip="File CREATE name differs from file name — possible typo. Click the pair hint to compare with the matching DB object.">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding HasRenameCandidates}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+
+                                <!-- Typo-rename pair: action button "↻ pair with [foo]?" -->
+                                <Button Margin="6,0,0,0" Padding="4,0" FontSize="11"
+                                        Background="Transparent" BorderThickness="0" Cursor="Hand"
+                                        Foreground="#7B2D8E"
+                                        Content="{Binding PairWithHint}"
+                                        Command="{Binding PairAsTypoRenameCommand}"
+                                        ToolTip="Looks like a CREATE-name typo — click to pair these as the same object">
+                                    <Button.Style>
+                                        <Style TargetType="Button">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding HasRenameCandidates}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+
+                                <!-- Typo-rename pair: undo link (shown on the collapsed Modified result) -->
+                                <Button Margin="8,0,0,0" Padding="4,0" FontSize="11"
+                                        Background="Transparent" BorderThickness="0" Cursor="Hand"
+                                        Foreground="#00695C"
+                                        Content="(undo pair)"
+                                        Command="{Binding UndoPairCommand}"
+                                        ToolTip="Split this paired change back into its original DROP + NEW">
+                                    <Button.Style>
+                                        <Style TargetType="Button">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsPaired}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
                             </StackPanel>
                         </HierarchicalDataTemplate>
                     </TreeView.Resources>

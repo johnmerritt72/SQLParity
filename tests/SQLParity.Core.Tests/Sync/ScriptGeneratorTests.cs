@@ -133,4 +133,92 @@ public class ScriptGeneratorTests
         Assert.Contains("/*", script.SqlText);
         Assert.Equal(0, script.TotalChanges);
     }
+
+    [Fact]
+    public void PairedModified_RewritesCreateProcedureName()
+    {
+        var change = new Change
+        {
+            Id = SchemaQualifiedName.TopLevel("dbo", "Foo"),  // DB's correct name
+            ObjectType = ObjectType.StoredProcedure,
+            Status = ChangeStatus.Modified,
+            DdlSideA = "CREATE PROCEDURE dbo.Fooo AS SELECT 1",  // file's typo'd DDL (apply DDL)
+            DdlSideB = "CREATE PROCEDURE dbo.Foo AS SELECT 1",   // existing DB DDL (display only)
+            PairedFromName = "Fooo",
+            ColumnChanges = System.Array.Empty<ColumnChange>(),
+        };
+
+        var script = ScriptGenerator.Generate(new[] { change }, DefaultOptions());
+        var result = script.SqlText;
+
+        Assert.Contains("dbo.Foo AS SELECT 1", result);
+        Assert.DoesNotContain("Fooo", result);
+    }
+
+    [Fact]
+    public void PairedModified_RewritesCreateOrAlterForm()
+    {
+        var change = new Change
+        {
+            Id = SchemaQualifiedName.TopLevel("dbo", "Foo"),
+            ObjectType = ObjectType.StoredProcedure,
+            Status = ChangeStatus.Modified,
+            DdlSideA = "CREATE OR ALTER PROCEDURE [dbo].[Fooo] AS SELECT 1",  // file's typo'd DDL (apply DDL)
+            DdlSideB = "CREATE OR ALTER PROCEDURE dbo.Foo AS SELECT 1",        // existing DB DDL (display only)
+            PairedFromName = "Fooo",
+            ColumnChanges = System.Array.Empty<ColumnChange>(),
+        };
+
+        var script = ScriptGenerator.Generate(new[] { change }, DefaultOptions());
+        var result = script.SqlText;
+
+        Assert.Contains("CREATE OR ALTER PROCEDURE", result);
+        Assert.Contains("Foo", result);
+        Assert.DoesNotContain("Fooo", result);
+    }
+
+    [Fact]
+    public void PairedModified_OnlyRewritesCreateNameToken_NotBodyReferences()
+    {
+        // Recursive reference in body — should be left alone for the user to spot.
+        var change = new Change
+        {
+            Id = SchemaQualifiedName.TopLevel("dbo", "Foo"),
+            ObjectType = ObjectType.StoredProcedure,
+            Status = ChangeStatus.Modified,
+            DdlSideA = "CREATE PROCEDURE dbo.Fooo AS BEGIN EXEC dbo.Fooo END",  // file's typo'd DDL (apply DDL)
+            DdlSideB = "CREATE PROCEDURE dbo.Foo AS BEGIN EXEC dbo.Foo END",    // existing DB DDL (display only)
+            PairedFromName = "Fooo",
+            ColumnChanges = System.Array.Empty<ColumnChange>(),
+        };
+
+        var script = ScriptGenerator.Generate(new[] { change }, DefaultOptions());
+        var result = script.SqlText;
+
+        // Header rewritten...
+        Assert.Contains("PROCEDURE dbo.Foo", result);
+        // ...but the body reference is left alone (user must fix that separately).
+        Assert.Contains("EXEC dbo.Fooo", result);
+    }
+
+    [Fact]
+    public void NonPaired_DoesNotRewrite()
+    {
+        var change = new Change
+        {
+            Id = SchemaQualifiedName.TopLevel("dbo", "Foo"),
+            ObjectType = ObjectType.StoredProcedure,
+            Status = ChangeStatus.Modified,
+            DdlSideA = "CREATE PROCEDURE dbo.Foo AS SELECT 1",
+            DdlSideB = "CREATE PROCEDURE dbo.Foo AS SELECT 2",
+            PairedFromName = null,  // not paired
+            ColumnChanges = System.Array.Empty<ColumnChange>(),
+        };
+
+        var script = ScriptGenerator.Generate(new[] { change }, DefaultOptions());
+        var result = script.SqlText;
+
+        // DdlSideA is the apply DDL — passes through unchanged (no rewrite since not paired).
+        Assert.Contains("SELECT 1", result);
+    }
 }

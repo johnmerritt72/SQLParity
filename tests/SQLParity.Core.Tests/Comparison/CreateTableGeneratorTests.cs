@@ -441,4 +441,123 @@ public class CreateTableGeneratorTests
 
         Assert.Contains("CONSTRAINT [DF_AlcoholSimulations_IsActive] DEFAULT ((1))", ddl);
     }
+
+    [Fact]
+    public void Generate_strips_auto_generated_primary_key_constraint_name()
+    {
+        var col = Col("Id", dataType: "int", nullable: false, ordinal: 0);
+        var pk = new IndexModel
+        {
+            Id = SchemaQualifiedName.Child("dbo", "T", "PK__T__3214EC275"),
+            Name = "PK__T__3214EC275",
+            IndexType = "CLUSTERED",
+            IsClustered = true,
+            IsUnique = true,
+            IsPrimaryKey = true,
+            IsUniqueConstraint = false,
+            HasFilter = false,
+            FilterDefinition = null,
+            Columns = new[] { new IndexedColumnModel { Name = "Id", IsDescending = false, IsIncluded = false } },
+            Ddl = string.Empty,
+        };
+        var table = MakeTable("dbo", "T", new[] { col }, new[] { pk });
+
+        var ddl = CreateTableGenerator.Generate(table);
+
+        Assert.DoesNotContain("PK__T__3214EC275", ddl);
+        Assert.DoesNotContain("CONSTRAINT [PK__", ddl);
+        Assert.Contains("PRIMARY KEY CLUSTERED ([Id] ASC)", ddl);
+    }
+
+    [Fact]
+    public void Generate_strips_empty_primary_key_constraint_name()
+    {
+        var col = Col("Id", dataType: "int", nullable: false, ordinal: 0);
+        var pk = new IndexModel
+        {
+            Id = SchemaQualifiedName.Child("dbo", "T", ""),
+            Name = "", // inline PK from parsed source has no name
+            IndexType = "CLUSTERED",
+            IsClustered = true,
+            IsUnique = true,
+            IsPrimaryKey = true,
+            IsUniqueConstraint = false,
+            HasFilter = false,
+            FilterDefinition = null,
+            Columns = new[] { new IndexedColumnModel { Name = "Id", IsDescending = false, IsIncluded = false } },
+            Ddl = string.Empty,
+        };
+        var table = MakeTable("dbo", "T", new[] { col }, new[] { pk });
+
+        var ddl = CreateTableGenerator.Generate(table);
+
+        Assert.DoesNotContain("CONSTRAINT []", ddl);
+        Assert.DoesNotContain("CONSTRAINT [ ]", ddl);
+        Assert.Contains("PRIMARY KEY CLUSTERED ([Id] ASC)", ddl);
+    }
+
+    [Fact]
+    public void Generate_preserves_user_named_primary_key()
+    {
+        var col = Col("Id", dataType: "int", nullable: false, ordinal: 0);
+        var pk = new IndexModel
+        {
+            Id = SchemaQualifiedName.Child("dbo", "T", "PK_T"),
+            Name = "PK_T",
+            IndexType = "CLUSTERED",
+            IsClustered = true,
+            IsUnique = true,
+            IsPrimaryKey = true,
+            IsUniqueConstraint = false,
+            HasFilter = false,
+            FilterDefinition = null,
+            Columns = new[] { new IndexedColumnModel { Name = "Id", IsDescending = false, IsIncluded = false } },
+            Ddl = string.Empty,
+        };
+        var table = MakeTable("dbo", "T", new[] { col }, new[] { pk });
+
+        var ddl = CreateTableGenerator.Generate(table);
+
+        Assert.Contains("CONSTRAINT [PK_T] PRIMARY KEY CLUSTERED ([Id] ASC)", ddl);
+    }
+
+    [Fact]
+    public void Generate_strips_auto_generated_check_constraint_name()
+    {
+        var col = Col("Age", dataType: "int", nullable: false, ordinal: 0);
+        var check = new CheckConstraintModel
+        {
+            Id = SchemaQualifiedName.Child("dbo", "T", "CK__T__Age_AABBCCDD"),
+            Name = "CK__T__Age_AABBCCDD",
+            Definition = "([Age] > (0))",
+            IsEnabled = true,
+            Ddl = string.Empty,
+        };
+        var table = MakeTable("dbo", "T", new[] { col }, indexes: null, checks: new[] { check });
+
+        var ddl = CreateTableGenerator.Generate(table);
+
+        Assert.DoesNotContain("CK__T__Age_AABBCCDD", ddl);
+        Assert.DoesNotContain("CONSTRAINT [CK__", ddl);
+        Assert.Contains("CHECK ([Age] > (0))", ddl);
+    }
+
+    [Fact]
+    public void Generate_preserves_user_named_check_constraint()
+    {
+        var col = Col("Age", dataType: "int", nullable: false, ordinal: 0);
+        var check = new CheckConstraintModel
+        {
+            Id = SchemaQualifiedName.Child("dbo", "T", "CK_T_AgePositive"),
+            Name = "CK_T_AgePositive",
+            Definition = "([Age] > (0))",
+            IsEnabled = true,
+            Ddl = string.Empty,
+        };
+        var table = MakeTable("dbo", "T", new[] { col }, indexes: null, checks: new[] { check });
+
+        var ddl = CreateTableGenerator.Generate(table);
+
+        Assert.Contains("CONSTRAINT [CK_T_AgePositive] CHECK ([Age] > (0))", ddl);
+    }
 }

@@ -46,6 +46,58 @@ public sealed class TableDdlParser
         var id = SchemaQualifiedName.TopLevel(schema, name);
         var columns = MapColumns(createTable, schema, name);
 
+        var indexes = new List<IndexModel>();
+        var foreignKeys = new List<ForeignKeyModel>();
+        var checkConstraints = new List<CheckConstraintModel>();
+
+        // Inline column-level constraints (PK, FK, UNIQUE, CHECK on a single column).
+        // DEFAULT lives on ColumnDefinition.DefaultConstraint and is handled in MapColumn;
+        // nullability is also there. Everything else is in Constraints.
+        if (createTable.Definition != null)
+        {
+            foreach (var col in createTable.Definition.ColumnDefinitions)
+            {
+                if (col.Constraints == null) continue;
+                foreach (var c in col.Constraints)
+                {
+                    switch (c)
+                    {
+                        case UniqueConstraintDefinition uniq:
+                            indexes.Add(MapUniqueAsIndex(uniq, schema, name,
+                                singleColumnInline: col.ColumnIdentifier.Value));
+                            break;
+                        case ForeignKeyConstraintDefinition fk:
+                            foreignKeys.Add(MapForeignKey(fk, schema, name,
+                                singleColumnInline: col.ColumnIdentifier.Value));
+                            break;
+                        case CheckConstraintDefinition chk:
+                            checkConstraints.Add(MapCheckConstraint(chk, schema, name));
+                            break;
+                    }
+                }
+            }
+
+            // Table-level constraints (CONSTRAINT ... PRIMARY KEY/UNIQUE/CHECK/FOREIGN KEY (...)).
+            if (createTable.Definition.TableConstraints != null)
+            {
+                foreach (var c in createTable.Definition.TableConstraints)
+                {
+                    switch (c)
+                    {
+                        case UniqueConstraintDefinition uniq:
+                            indexes.Add(MapUniqueAsIndex(uniq, schema, name, singleColumnInline: null));
+                            break;
+                        case ForeignKeyConstraintDefinition fk:
+                            foreignKeys.Add(MapForeignKey(fk, schema, name, singleColumnInline: null));
+                            break;
+                        case CheckConstraintDefinition chk:
+                            checkConstraints.Add(MapCheckConstraint(chk, schema, name));
+                            break;
+                    }
+                }
+            }
+        }
+
         return new TableModel
         {
             Id = id,
@@ -53,9 +105,9 @@ public sealed class TableDdlParser
             Name = name,
             Ddl = tableBatchDdl ?? string.Empty,
             Columns = columns,
-            Indexes = System.Array.Empty<IndexModel>(),       // filled in Task 4
-            ForeignKeys = System.Array.Empty<ForeignKeyModel>(),  // filled in Task 5
-            CheckConstraints = System.Array.Empty<CheckConstraintModel>(), // filled in Task 5
+            Indexes = indexes,
+            ForeignKeys = foreignKeys,
+            CheckConstraints = checkConstraints,
             Triggers = System.Array.Empty<TriggerModel>(),
         };
     }
@@ -244,6 +296,122 @@ public sealed class TableDdlParser
         });
         gen.GenerateScript(fragment, out string output);
         return (output ?? string.Empty).Trim();
+    }
+
+    private static IndexModel MapUniqueAsIndex(
+        UniqueConstraintDefinition uniq,
+        string schema,
+        string tableName,
+        string? singleColumnInline)
+    {
+        var cols = new List<IndexedColumnModel>();
+        if (singleColumnInline != null)
+        {
+            cols.Add(new IndexedColumnModel
+            {
+                Name = singleColumnInline,
+                IsDescending = false,
+                IsIncluded = false,
+            });
+        }
+        else if (uniq.Columns != null)
+        {
+            foreach (var c in uniq.Columns)
+            {
+                cols.Add(new IndexedColumnModel
+                {
+                    Name = c.Column.MultiPartIdentifier.Identifiers[^1].Value,
+                    IsDescending = c.SortOrder == SortOrder.Descending,
+                    IsIncluded = false,
+                });
+            }
+        }
+
+        bool clustered = uniq.Clustered.HasValue ? uniq.Clustered.Value : uniq.IsPrimaryKey;
+        string indexName = uniq.ConstraintIdentifier?.Value ?? string.Empty;
+
+        return new IndexModel
+        {
+            Id = SchemaQualifiedName.Child(schema, tableName, indexName),
+            Name = indexName,
+            IndexType = clustered ? "CLUSTERED" : "NONCLUSTERED",
+            IsClustered = clustered,
+            IsUnique = true,
+            IsPrimaryKey = uniq.IsPrimaryKey,
+            IsUniqueConstraint = !uniq.IsPrimaryKey,
+            HasFilter = false,
+            FilterDefinition = null,
+            Columns = cols,
+            Ddl = string.Empty,
+        };
+    }
+
+    private static ForeignKeyModel MapForeignKey(
+        ForeignKeyConstraintDefinition fk,
+        string schema,
+        string tableName,
+        string? singleColumnInline)
+    {
+        var cols = new List<ForeignKeyColumnModel>();
+        var refIds = fk.ReferenceTableName?.Identifiers;
+        string refSchema = refIds != null && refIds.Count >= 2 ? refIds[refIds.Count - 2].Value : "dbo";
+        string refTable = refIds != null && refIds.Count >= 1 ? refIds[refIds.Count - 1].Value : string.Empty;
+
+        if (singleColumnInline != null)
+        {
+            string refCol = fk.ReferencedTableColumns != null && fk.ReferencedTableColumns.Count > 0
+                ? fk.ReferencedTableColumns[0].Value
+                : string.Empty;
+            cols.Add(new ForeignKeyColumnModel
+            {
+                LocalColumn = singleColumnInline,
+                ReferencedColumn = refCol,
+            });
+        }
+        else
+        {
+            int n = System.Math.Min(
+                fk.Columns?.Count ?? 0,
+                fk.ReferencedTableColumns?.Count ?? 0);
+            for (int i = 0; i < n; i++)
+            {
+                cols.Add(new ForeignKeyColumnModel
+                {
+                    LocalColumn = fk.Columns![i].Value,
+                    ReferencedColumn = fk.ReferencedTableColumns![i].Value,
+                });
+            }
+        }
+
+        string fkName = fk.ConstraintIdentifier?.Value ?? string.Empty;
+        return new ForeignKeyModel
+        {
+            Id = SchemaQualifiedName.Child(schema, tableName, fkName),
+            Name = fkName,
+            ReferencedTableSchema = refSchema,
+            ReferencedTableName = refTable,
+            DeleteAction = fk.DeleteAction.ToString().ToUpperInvariant(),
+            UpdateAction = fk.UpdateAction.ToString().ToUpperInvariant(),
+            IsEnabled = true,
+            Columns = cols,
+            Ddl = string.Empty,
+        };
+    }
+
+    private static CheckConstraintModel MapCheckConstraint(
+        CheckConstraintDefinition chk,
+        string schema,
+        string tableName)
+    {
+        string ckName = chk.ConstraintIdentifier?.Value ?? string.Empty;
+        return new CheckConstraintModel
+        {
+            Id = SchemaQualifiedName.Child(schema, tableName, ckName),
+            Name = ckName,
+            Definition = RoundTripExpression(chk.CheckCondition),
+            IsEnabled = true,
+            Ddl = string.Empty,
+        };
     }
 
     /// <summary>

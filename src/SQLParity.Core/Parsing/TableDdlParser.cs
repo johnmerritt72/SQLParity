@@ -125,15 +125,57 @@ public sealed class TableDdlParser
         var defs = createTable.Definition?.ColumnDefinitions;
         if (defs == null) return result;
 
+        // T-SQL: any column included in a PRIMARY KEY is implicitly NOT NULL.
+        // Collect those column names (inline-PK on a column AND table-level PK
+        // constraint) so MapColumn can override IsNullable accordingly. Without
+        // this, a folder-side parse of "Id INT PRIMARY KEY" reports nullable
+        // while the live-DB side reports NOT NULL — and the diff panel flags
+        // the PK row spuriously.
+        var pkColumnNames = CollectPrimaryKeyColumnNames(createTable);
+
         for (int i = 0; i < defs.Count; i++)
         {
             var col = defs[i];
-            result.Add(MapColumn(col, i, schema, tableName));
+            result.Add(MapColumn(col, i, schema, tableName, pkColumnNames));
         }
         return result;
     }
 
-    private static ColumnModel MapColumn(ColumnDefinition col, int ordinal, string schema, string tableName)
+    private static HashSet<string> CollectPrimaryKeyColumnNames(CreateTableStatement createTable)
+    {
+        var pkNames = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+        if (createTable.Definition == null) return pkNames;
+
+        foreach (var col in createTable.Definition.ColumnDefinitions)
+        {
+            if (col.Constraints == null) continue;
+            foreach (var c in col.Constraints)
+            {
+                if (c is UniqueConstraintDefinition uniq && uniq.IsPrimaryKey)
+                    pkNames.Add(col.ColumnIdentifier.Value);
+            }
+        }
+
+        if (createTable.Definition.TableConstraints != null)
+        {
+            foreach (var c in createTable.Definition.TableConstraints)
+            {
+                if (c is UniqueConstraintDefinition uniq && uniq.IsPrimaryKey && uniq.Columns != null)
+                {
+                    foreach (var keyCol in uniq.Columns)
+                    {
+                        var ids = keyCol.Column?.MultiPartIdentifier?.Identifiers;
+                        if (ids != null && ids.Count > 0)
+                            pkNames.Add(ids[ids.Count - 1].Value);
+                    }
+                }
+            }
+        }
+
+        return pkNames;
+    }
+
+    private static ColumnModel MapColumn(ColumnDefinition col, int ordinal, string schema, string tableName, HashSet<string> pkColumnNames)
     {
         string colName = col.ColumnIdentifier.Value;
 
@@ -180,6 +222,11 @@ public sealed class TableDdlParser
                     isNullable = nc.Nullable;
             }
         }
+
+        // PRIMARY KEY columns are implicitly NOT NULL — this overrides both the
+        // T-SQL "default nullable" rule AND any explicit (illegal) NULL clause.
+        if (pkColumnNames.Contains(colName))
+            isNullable = false;
 
         // DEFAULT is a direct property on ColumnDefinition, not inside Constraints.
         if (col.DefaultConstraint != null)

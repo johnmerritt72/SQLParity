@@ -336,4 +336,45 @@ public class TableDdlParserTests
         Assert.NotNull(result);
         Assert.Empty(result!.Indexes);
     }
+
+    [Fact]
+    public void Parse_inline_primary_key_column_is_not_nullable()
+    {
+        // T-SQL: a PRIMARY KEY column is implicitly NOT NULL even when the
+        // user omits NULL/NOT NULL. Without this rule the parsed folder side
+        // shows NULL for the PK column while the live-DB side shows NOT NULL,
+        // and the diff panel lights up the PK row spuriously.
+        var parser = MakeParser();
+        var result = parser.Parse(
+            "CREATE TABLE dbo.T (Id INT IDENTITY(1,1) PRIMARY KEY)",
+            "dbo", "T", null, out _);
+
+        Assert.NotNull(result);
+        Assert.False(result!.Columns[0].IsNullable,
+            "Inline PRIMARY KEY column must be NOT NULL.");
+    }
+
+    [Fact]
+    public void Parse_table_level_primary_key_columns_are_not_nullable()
+    {
+        // Same rule applies when the PK is declared at the table level —
+        // every column listed in the PK must be NOT NULL.
+        var parser = MakeParser();
+        var result = parser.Parse(
+            @"CREATE TABLE dbo.T (
+                TenantId INT,
+                Id INT,
+                Name NVARCHAR(50),
+                CONSTRAINT PK_T PRIMARY KEY CLUSTERED (TenantId, Id)
+            )",
+            "dbo", "T", null, out _);
+
+        Assert.NotNull(result);
+        var tenant = result!.Columns[0];
+        var id = result.Columns[1];
+        var name = result.Columns[2];
+        Assert.False(tenant.IsNullable, "TenantId is in the PK so must be NOT NULL.");
+        Assert.False(id.IsNullable, "Id is in the PK so must be NOT NULL.");
+        Assert.True(name.IsNullable, "Name is not in the PK and has no explicit NOT NULL — should default to nullable.");
+    }
 }

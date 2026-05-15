@@ -83,7 +83,12 @@ public static class ColumnComparator
     private static bool IsModified(ColumnModel a, ColumnModel b)
     {
         if (!string.Equals(a.DataType, b.DataType, StringComparison.OrdinalIgnoreCase)) return true;
-        if (a.MaxLength != b.MaxLength) return true;
+        // MaxLength is the byte/character width and is only user-meaningful for
+        // variable-width types (varchar(N), nvarchar(N), binary(N), etc.). For
+        // fixed-width types like int/bigint/datetime the catalog still reports a
+        // non-zero byte size but the folder-side parser leaves it at 0, so an
+        // unguarded comparison flags every such column as modified on every run.
+        if (IsVariableWidthType(a.DataType) && a.MaxLength != b.MaxLength) return true;
         if (a.Precision != b.Precision) return true;
         if (a.Scale != b.Scale) return true;
         if (a.IsNullable != b.IsNullable) return true;
@@ -95,6 +100,14 @@ public static class ColumnComparator
         if (!DefaultConstraintsEqual(a.DefaultConstraint, b.DefaultConstraint)) return true;
         return false;
     }
+
+    private static bool IsVariableWidthType(string dataType) =>
+        dataType.Equals("varchar", StringComparison.OrdinalIgnoreCase)
+        || dataType.Equals("nvarchar", StringComparison.OrdinalIgnoreCase)
+        || dataType.Equals("char", StringComparison.OrdinalIgnoreCase)
+        || dataType.Equals("nchar", StringComparison.OrdinalIgnoreCase)
+        || dataType.Equals("binary", StringComparison.OrdinalIgnoreCase)
+        || dataType.Equals("varbinary", StringComparison.OrdinalIgnoreCase);
 
     private static bool DefaultConstraintsEqual(DefaultConstraintModel? a, DefaultConstraintModel? b)
     {

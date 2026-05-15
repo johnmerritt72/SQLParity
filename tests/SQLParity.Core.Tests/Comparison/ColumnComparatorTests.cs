@@ -131,4 +131,40 @@ public class ColumnComparatorTests
 
         Assert.Empty(result);
     }
+
+    // Fixed-width types (bigint/int/smallint/tinyint/datetime/float/bit/etc.) carry
+    // a non-zero byte size in sys.columns.max_length but the folder-side parser has
+    // no parameter to extract, so MaxLength is 0. The size is fully determined by
+    // the type itself, so a difference here is not a real schema change.
+    [Theory]
+    [InlineData("bigint", 8)]
+    [InlineData("int", 4)]
+    [InlineData("smallint", 2)]
+    [InlineData("tinyint", 1)]
+    [InlineData("datetime", 8)]
+    [InlineData("float", 8)]
+    [InlineData("bit", 1)]
+    public void MaxLengthOnFixedWidthType_NotDetectedAsModified(string dataType, int dbMaxLength)
+    {
+        var colA = MakeColumn("Orders", "Col", dataType: dataType, maxLen: dbMaxLength);
+        var colB = MakeColumn("Orders", "Col", dataType: dataType, maxLen: 0);
+
+        var result = ColumnComparator.Compare("dbo", "Orders",
+            new[] { colA }, new[] { colB });
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void MaxLengthOnVarcharStillCompared()
+    {
+        var colA = MakeColumn("Orders", "Code", dataType: "varchar", maxLen: 50);
+        var colB = MakeColumn("Orders", "Code", dataType: "varchar", maxLen: 100);
+
+        var result = ColumnComparator.Compare("dbo", "Orders",
+            new[] { colA }, new[] { colB });
+
+        Assert.Single(result);
+        Assert.Equal(ChangeStatus.Modified, result[0].Status);
+    }
 }

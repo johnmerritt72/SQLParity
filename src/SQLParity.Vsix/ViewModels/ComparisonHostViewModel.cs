@@ -66,6 +66,7 @@ namespace SQLParity.Vsix.ViewModels
             NewComparisonCommand = new RelayCommand(_ => StartNewComparison());
             CancelComparisonCommand = new RelayCommand(_ => CancelComparison(), _ => CurrentState == WorkflowState.Comparing);
             StartOverCommand = new RelayCommand(_ => { CurrentState = WorkflowState.ConnectionSetup; }, _ => CurrentState == WorkflowState.Results && !IsBusy);
+            RefreshComparisonCommand = new RelayCommand(_ => RefreshComparison(), _ => CurrentState == WorkflowState.Results && !IsBusy);
 
             SetupViewModel.ContinueRequested += (s, e) =>
             {
@@ -103,6 +104,13 @@ namespace SQLParity.Vsix.ViewModels
         public ICommand NewComparisonCommand { get; }
         public ICommand CancelComparisonCommand { get; }
         public ICommand StartOverCommand { get; }
+        public ICommand RefreshComparisonCommand { get; }
+
+        private void RefreshComparison()
+        {
+            SchemaCache.Clear();
+            RunComparisonAsync();
+        }
 
         private void CancelComparison()
         {

@@ -455,6 +455,10 @@
                 <Button DockPanel.Dock="Left" Content="Start Over" Padding="12,6" Margin="0,0,8,0"
                         Command="{Binding DataContext.StartOverCommand,
                             RelativeSource={RelativeSource AncestorType=views:ComparisonHostView}}" />
+                <Button DockPanel.Dock="Left" Content="Refresh Comparison" Padding="12,6" Margin="0,0,8,0"
+                        ToolTip="Re-read DDL from databases (and re-scan source files in folder mode), then re-compare."
+                        Command="{Binding DataContext.RefreshComparisonCommand,
+                            RelativeSource={RelativeSource AncestorType=views:ComparisonHostView}}" />
 
                 <!-- Status text -->
                 <TextBlock VerticalAlignment="Center" Margin="4,0"

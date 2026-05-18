@@ -241,4 +241,66 @@ public class ColumnComparatorTests
         Assert.Single(result);
         Assert.Equal(ChangeStatus.Modified, result[0].Status);
     }
+
+    // sys.columns.collation_name is always populated for string columns (either
+    // the explicit COLLATE value or the database default). The ScriptDom parser
+    // only fills Collation when the CREATE TABLE actually has a COLLATE clause.
+    // Treat null on either side as "unspecified, inherit default" and skip the
+    // comparison; only flag when both sides specify different explicit values.
+    [Fact]
+    public void Collation_DbExplicitVsFolderNull_NotDetectedAsModified()
+    {
+        var colA = MakeColumn("Orders", "Name", dataType: "varchar", maxLen: 50,
+            collation: "SQL_Latin1_General_CP1_CI_AS");
+        var colB = MakeColumn("Orders", "Name", dataType: "varchar", maxLen: 50,
+            collation: null);
+
+        var result = ColumnComparator.Compare("dbo", "Orders",
+            new[] { colA }, new[] { colB });
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void Collation_FolderExplicitVsDbNull_NotDetectedAsModified()
+    {
+        var colA = MakeColumn("Orders", "Name", dataType: "varchar", maxLen: 50,
+            collation: null);
+        var colB = MakeColumn("Orders", "Name", dataType: "varchar", maxLen: 50,
+            collation: "SQL_Latin1_General_CP1_CI_AS");
+
+        var result = ColumnComparator.Compare("dbo", "Orders",
+            new[] { colA }, new[] { colB });
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void Collation_BothExplicitDifferent_StillDetected()
+    {
+        var colA = MakeColumn("Orders", "Name", dataType: "varchar", maxLen: 50,
+            collation: "SQL_Latin1_General_CP1_CI_AS");
+        var colB = MakeColumn("Orders", "Name", dataType: "varchar", maxLen: 50,
+            collation: "Latin1_General_BIN");
+
+        var result = ColumnComparator.Compare("dbo", "Orders",
+            new[] { colA }, new[] { colB });
+
+        Assert.Single(result);
+        Assert.Equal(ChangeStatus.Modified, result[0].Status);
+    }
+
+    [Fact]
+    public void Collation_BothExplicitSame_NotDetected()
+    {
+        var colA = MakeColumn("Orders", "Name", dataType: "varchar", maxLen: 50,
+            collation: "SQL_Latin1_General_CP1_CI_AS");
+        var colB = MakeColumn("Orders", "Name", dataType: "varchar", maxLen: 50,
+            collation: "SQL_Latin1_General_CP1_CI_AS");
+
+        var result = ColumnComparator.Compare("dbo", "Orders",
+            new[] { colA }, new[] { colB });
+
+        Assert.Empty(result);
+    }
 }

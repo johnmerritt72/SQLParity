@@ -97,7 +97,15 @@ public static class ColumnComparator
         if (a.IsComputed != b.IsComputed) return true;
         if (!string.Equals(a.ComputedText, b.ComputedText, StringComparison.Ordinal)) return true;
         if (a.IsPersisted != b.IsPersisted) return true;
-        if (!string.Equals(a.Collation, b.Collation, StringComparison.OrdinalIgnoreCase)) return true;
+        // sys.columns.collation_name is always populated for string columns
+        // (the explicit value or the DB default), while ScriptDom only fills
+        // Collation when the CREATE TABLE has a COLLATE clause. Treat null on
+        // either side as "unspecified, inherit default" and skip — only flag
+        // when both sides specify explicit collations that disagree.
+        // TODO: when both DatabaseSchemas expose their default collation,
+        // upgrade this to compare against the DB default when one side is null.
+        if (a.Collation is not null && b.Collation is not null
+            && !string.Equals(a.Collation, b.Collation, StringComparison.OrdinalIgnoreCase)) return true;
         if (!DefaultConstraintsEqual(a.DefaultConstraint, b.DefaultConstraint)) return true;
         return false;
     }

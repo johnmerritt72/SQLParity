@@ -13,6 +13,8 @@ public class ColumnComparatorTests
         string name,
         string dataType = "Int",
         int maxLen = 0,
+        int precision = 0,
+        int scale = 0,
         bool nullable = false,
         int ordinal = 0,
         string? collation = null,
@@ -22,8 +24,8 @@ public class ColumnComparatorTests
         Name = name,
         DataType = dataType,
         MaxLength = maxLen,
-        Precision = 0,
-        Scale = 0,
+        Precision = precision,
+        Scale = scale,
         IsNullable = nullable,
         IsIdentity = false,
         IdentitySeed = 0,
@@ -160,6 +162,78 @@ public class ColumnComparatorTests
     {
         var colA = MakeColumn("Orders", "Code", dataType: "varchar", maxLen: 50);
         var colB = MakeColumn("Orders", "Code", dataType: "varchar", maxLen: 100);
+
+        var result = ColumnComparator.Compare("dbo", "Orders",
+            new[] { colA }, new[] { colB });
+
+        Assert.Single(result);
+        Assert.Equal(ChangeStatus.Modified, result[0].Status);
+    }
+
+    // sys.columns.precision reports an implementation-defined number of digits
+    // for every numeric type, but the T-SQL grammar only lets you write a
+    // precision parameter on decimal/numeric. For everything else the folder
+    // parser leaves Precision at 0, so an unguarded comparison flags every
+    // int/bigint/tinyint/smallint/datetime/bit/float column as modified.
+    [Theory]
+    [InlineData("int", 10)]
+    [InlineData("bigint", 19)]
+    [InlineData("smallint", 5)]
+    [InlineData("tinyint", 3)]
+    [InlineData("bit", 1)]
+    [InlineData("datetime", 23)]
+    [InlineData("float", 53)]
+    public void PrecisionOnNonDecimalType_NotDetectedAsModified(string dataType, int dbPrecision)
+    {
+        var colA = MakeColumn("Orders", "Col", dataType: dataType, precision: dbPrecision);
+        var colB = MakeColumn("Orders", "Col", dataType: dataType, precision: 0);
+
+        var result = ColumnComparator.Compare("dbo", "Orders",
+            new[] { colA }, new[] { colB });
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void PrecisionOnDecimalStillCompared()
+    {
+        var colA = MakeColumn("Orders", "Amount", dataType: "decimal", precision: 18, scale: 2);
+        var colB = MakeColumn("Orders", "Amount", dataType: "decimal", precision: 10, scale: 2);
+
+        var result = ColumnComparator.Compare("dbo", "Orders",
+            new[] { colA }, new[] { colB });
+
+        Assert.Single(result);
+        Assert.Equal(ChangeStatus.Modified, result[0].Status);
+    }
+
+    // datetime has Scale=3 in sys.columns but no scale parameter in T-SQL
+    // syntax. Same parity gap as Precision.
+    [Theory]
+    [InlineData("datetime", 3)]
+    [InlineData("money", 4)]
+    [InlineData("smallmoney", 4)]
+    public void ScaleOnNonExplicitScaleType_NotDetectedAsModified(string dataType, int dbScale)
+    {
+        var colA = MakeColumn("Orders", "Col", dataType: dataType, scale: dbScale);
+        var colB = MakeColumn("Orders", "Col", dataType: dataType, scale: 0);
+
+        var result = ColumnComparator.Compare("dbo", "Orders",
+            new[] { colA }, new[] { colB });
+
+        Assert.Empty(result);
+    }
+
+    [Theory]
+    [InlineData("decimal")]
+    [InlineData("numeric")]
+    [InlineData("datetime2")]
+    [InlineData("time")]
+    [InlineData("datetimeoffset")]
+    public void ScaleOnExplicitScaleType_StillCompared(string dataType)
+    {
+        var colA = MakeColumn("Orders", "Col", dataType: dataType, scale: 3);
+        var colB = MakeColumn("Orders", "Col", dataType: dataType, scale: 7);
 
         var result = ColumnComparator.Compare("dbo", "Orders",
             new[] { colA }, new[] { colB });

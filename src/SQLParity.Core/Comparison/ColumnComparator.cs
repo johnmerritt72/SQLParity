@@ -83,14 +83,15 @@ public static class ColumnComparator
     private static bool IsModified(ColumnModel a, ColumnModel b)
     {
         if (!string.Equals(a.DataType, b.DataType, StringComparison.OrdinalIgnoreCase)) return true;
-        // MaxLength is the byte/character width and is only user-meaningful for
-        // variable-width types (varchar(N), nvarchar(N), binary(N), etc.). For
-        // fixed-width types like int/bigint/datetime the catalog still reports a
-        // non-zero byte size but the folder-side parser leaves it at 0, so an
-        // unguarded comparison flags every such column as modified on every run.
+        // sys.columns reports byte/digit widths for every numeric/date type but
+        // T-SQL only lets you write the corresponding parameter on a subset of
+        // them — varchar(N), decimal(p,s), datetime2(s), etc. For the rest the
+        // folder-side parser leaves MaxLength / Precision / Scale at 0, so an
+        // unguarded comparison flags every int / bigint / datetime / bit / ...
+        // column as modified on every run.
         if (IsVariableWidthType(a.DataType) && a.MaxLength != b.MaxLength) return true;
-        if (a.Precision != b.Precision) return true;
-        if (a.Scale != b.Scale) return true;
+        if (IsPrecisionMeaningful(a.DataType) && a.Precision != b.Precision) return true;
+        if (IsScaleMeaningful(a.DataType) && a.Scale != b.Scale) return true;
         if (a.IsNullable != b.IsNullable) return true;
         if (a.IsIdentity != b.IsIdentity) return true;
         if (a.IsComputed != b.IsComputed) return true;
@@ -108,6 +109,17 @@ public static class ColumnComparator
         || dataType.Equals("nchar", StringComparison.OrdinalIgnoreCase)
         || dataType.Equals("binary", StringComparison.OrdinalIgnoreCase)
         || dataType.Equals("varbinary", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsPrecisionMeaningful(string dataType) =>
+        dataType.Equals("decimal", StringComparison.OrdinalIgnoreCase)
+        || dataType.Equals("numeric", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsScaleMeaningful(string dataType) =>
+        dataType.Equals("decimal", StringComparison.OrdinalIgnoreCase)
+        || dataType.Equals("numeric", StringComparison.OrdinalIgnoreCase)
+        || dataType.Equals("datetime2", StringComparison.OrdinalIgnoreCase)
+        || dataType.Equals("time", StringComparison.OrdinalIgnoreCase)
+        || dataType.Equals("datetimeoffset", StringComparison.OrdinalIgnoreCase);
 
     private static bool DefaultConstraintsEqual(DefaultConstraintModel? a, DefaultConstraintModel? b)
     {

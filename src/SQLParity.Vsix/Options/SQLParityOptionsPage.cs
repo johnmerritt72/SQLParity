@@ -62,6 +62,18 @@ namespace SQLParity.Vsix.Options
         public bool ShowLineNumbers { get; set; } = true;
 
         [Category("Comparison")]
+        [DisplayName("DDL Panel Font Size")]
+        [Description("Font size (points) for the side-by-side DDL diff panels. Adjustable at runtime with Ctrl+MouseWheel or Ctrl+Plus/Ctrl+Minus; Ctrl+0 resets to the default of 12.")]
+        [DefaultValue(12)]
+        public int DdlFontSize { get; set; } = 12;
+
+        [Category("Comparison")]
+        [DisplayName("Wrap DDL Panels")]
+        [Description("When enabled, long lines in the DDL diff panels wrap to the panel width. When disabled (default), lines stay on one line and scroll horizontally.")]
+        [DefaultValue(false)]
+        public bool WrapDdlPanels { get; set; } = false;
+
+        [Category("Comparison")]
         [DisplayName("Ignore Comments in Stored Procedures and Functions")]
         [Description("When enabled, stored procedures and user-defined functions whose only differences are inside SQL comments (-- ... or /* ... */) are not reported as Modified.")]
         [DefaultValue(false)]

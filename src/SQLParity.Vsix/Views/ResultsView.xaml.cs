@@ -12,10 +12,45 @@ namespace SQLParity.Vsix.Views
         private bool _isSyncingScroll;
         private bool _scrollingHooked;
 
+        private const double MinFontSize = 6;
+        private const double MaxFontSize = 40;
+        private const double DefaultFontSize = 12;
+        private double _ddlFontSize = DefaultFontSize;
+        private bool _wrapPanels;
+        private System.Windows.Threading.DispatcherTimer _persistTimer;
+
         public ResultsView()
         {
             InitializeComponent();
+            LoadDdlPanelOptions();
             DataContextChanged += OnDataContextChanged;
+        }
+
+        private void LoadDdlPanelOptions()
+        {
+            try
+            {
+                var opts = Options.OptionsHelper.GetOptions();
+                if (opts != null)
+                {
+                    _ddlFontSize = ClampFont(opts.DdlFontSize);
+                    _wrapPanels = opts.WrapDdlPanels;
+                    GutterA.ShowNumbers = opts.ShowLineNumbers;
+                    GutterB.ShowNumbers = opts.ShowLineNumbers;
+                }
+            }
+            catch { }
+
+            if (WrapToggle != null) WrapToggle.IsChecked = _wrapPanels;
+            GutterA.FontSize = _ddlFontSize;
+            GutterB.FontSize = _ddlFontSize;
+        }
+
+        private static double ClampFont(double size)
+        {
+            if (size < MinFontSize) return MinFontSize;
+            if (size > MaxFontSize) return MaxFontSize;
+            return size;
         }
 
         /// <summary>
@@ -164,6 +199,7 @@ namespace SQLParity.Vsix.Views
                 ErrorBannerBorder.Visibility = Visibility.Collapsed;
                 DdlBoxA.Document = new FlowDocument();
                 DdlBoxB.Document = new FlowDocument();
+                ApplyDdlPanelSettings();
                 return;
             }
 
@@ -182,6 +218,7 @@ namespace SQLParity.Vsix.Views
                 DdlBoxB.Document = errorB != null
                     ? PlaceholderDoc("(could not load — see error above)")
                     : RawDoc(ddlB);
+                ApplyDdlPanelSettings();
                 return;
             }
 
@@ -191,7 +228,131 @@ namespace SQLParity.Vsix.Views
             DdlBoxA.Document = docA;
             DdlBoxB.Document = docB;
 
+            ApplyDdlPanelSettings();
             EnsureSyncScrollingHooked();
+        }
+
+        private void ApplyDdlPanelSettings()
+        {
+            ApplyFontSize();
+            ApplyWrap();
+        }
+
+        private void ApplyFontSize()
+        {
+            if (DdlBoxA.Document != null) DdlBoxA.Document.FontSize = _ddlFontSize;
+            if (DdlBoxB.Document != null) DdlBoxB.Document.FontSize = _ddlFontSize;
+            GutterA.FontSize = _ddlFontSize;
+            GutterB.FontSize = _ddlFontSize;
+
+            // Re-point gutters at their boxes (document instances change per selection)
+            // and repaint after layout settles.
+            GutterA.Target = DdlBoxA;
+            GutterB.Target = DdlBoxB;
+            Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded,
+                new System.Action(() => { GutterA.Refresh(); GutterB.Refresh(); }));
+        }
+
+        private void ApplyWrap()
+        {
+            ApplyWrapToBox(DdlBoxA);
+            ApplyWrapToBox(DdlBoxB);
+        }
+
+        private void ApplyWrapToBox(RichTextBox box)
+        {
+            var doc = box.Document;
+            if (doc == null) return;
+
+            if (_wrapPanels)
+            {
+                doc.PageWidth = double.NaN; // auto — wraps to the viewport width
+            }
+            else
+            {
+                // Widen the page so lines don't wrap; a horizontal scrollbar appears only
+                // when content is actually wider than the viewport.
+                double longest = EstimateLongestLineWidth(doc);
+                double viewport = box.ActualWidth > 0 ? box.ActualWidth : 600;
+                doc.PageWidth = System.Math.Max(longest, viewport);
+            }
+        }
+
+        private double EstimateLongestLineWidth(FlowDocument doc)
+        {
+            int maxChars = 0;
+            foreach (var block in doc.Blocks)
+            {
+                if (block is System.Windows.Documents.Paragraph p)
+                {
+                    int len = 0;
+                    foreach (var inline in p.Inlines)
+                        if (inline is System.Windows.Documents.Run r && r.Text != null)
+                            len += r.Text.Length;
+                    if (len > maxChars) maxChars = len;
+                }
+            }
+            // Consolas advance ~0.62em, plus a small margin for the page padding.
+            return maxChars * _ddlFontSize * 0.62 + 32;
+        }
+
+        private void AdjustFontSize(double delta)
+        {
+            double newSize = ClampFont(_ddlFontSize + delta);
+            if (System.Math.Abs(newSize - _ddlFontSize) < 0.01) return;
+            _ddlFontSize = newSize;
+            ApplyFontSize();
+            if (!_wrapPanels) ApplyWrap(); // line widths changed; recompute no-wrap page width
+            SchedulePersist();
+        }
+
+        private void ResetFontSize()
+        {
+            if (System.Math.Abs(_ddlFontSize - DefaultFontSize) < 0.01) return;
+            _ddlFontSize = DefaultFontSize;
+            ApplyFontSize();
+            if (!_wrapPanels) ApplyWrap();
+            SchedulePersist();
+        }
+
+        private void SchedulePersist()
+        {
+            if (_persistTimer == null)
+            {
+                _persistTimer = new System.Windows.Threading.DispatcherTimer
+                {
+                    Interval = System.TimeSpan.FromMilliseconds(500)
+                };
+                _persistTimer.Tick += (s, e) =>
+                {
+                    _persistTimer.Stop();
+                    PersistDdlPanelOptions();
+                };
+            }
+            _persistTimer.Stop();
+            _persistTimer.Start();
+        }
+
+        private void PersistDdlPanelOptions()
+        {
+            try
+            {
+                var opts = Options.OptionsHelper.GetOptions();
+                if (opts == null) return;
+                opts.DdlFontSize = (int)System.Math.Round(_ddlFontSize);
+                opts.WrapDdlPanels = _wrapPanels;
+                opts.SaveSettingsToStorage();
+            }
+            catch { }
+        }
+
+        private void WrapToggle_Changed(object sender, RoutedEventArgs e)
+        {
+            _wrapPanels = WrapToggle.IsChecked == true;
+            ApplyWrap();
+            Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded,
+                new System.Action(() => { GutterA.Refresh(); GutterB.Refresh(); }));
+            PersistDdlPanelOptions();
         }
 
         /// <summary>

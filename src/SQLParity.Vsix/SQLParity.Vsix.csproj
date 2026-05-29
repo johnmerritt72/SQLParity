@@ -75,6 +75,7 @@
     </Compile>
     <Compile Include="Options\OptionsHelper.cs" />
     <Compile Include="Helpers\SimpleDiffHighlighter.cs" />
+    <Compile Include="Helpers\LineNumberGutter.cs" />
     <Compile Include="Helpers\ConnectionHistoryStore.cs" />
     <Compile Include="Helpers\RegisteredServerHelper.cs" />
     <Compile Include="Helpers\SsmsSolutionService.cs" />

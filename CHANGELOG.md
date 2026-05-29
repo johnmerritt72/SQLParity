@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.6] — 2026-05-29
+
+### Added
+- **Adjustable DDL panel font size.** Zoom the side-by-side DDL panels with Ctrl+MouseWheel or Ctrl+Plus / Ctrl+Minus; Ctrl+0 resets to the default. The choice persists via Tools → Options ("DDL Panel Font Size").
+- **Word-wrap toggle for DDL panels.** A "Wrap" checkbox in the panel header wraps long lines; off by default (lines scroll horizontally). Persists via Tools → Options ("Wrap DDL Panels").
+- **Line numbers excluded from copied SQL.** Line numbers now render in a dedicated gutter instead of inline, so selecting and copying DDL yields clean, runnable SQL without the line-number prefix.
+
 ## [1.3.5] — 2026-05-18
 
 ### Fixed

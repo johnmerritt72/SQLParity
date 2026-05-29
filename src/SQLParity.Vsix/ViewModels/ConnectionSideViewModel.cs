@@ -174,12 +174,15 @@ namespace SQLParity.Vsix.ViewModels
                     // If the user picked a real DB from the dropdown after a
                     // successful connect, persist immediately so the saved-
                     // connection list reflects what works without waiting for
-                    // Continue. AvailableDatabases is empty pre-connect (cleared
-                    // at the start of every DoConnectAsync), so the gate is
-                    // false on every autofill / Compare-Selected-Database path —
-                    // those still get persisted by the DoConnectAsync post-
-                    // connect call once the list populates.
-                    if (!string.IsNullOrWhiteSpace(value)
+                    // Continue. Skip during autofill — on Start Over the
+                    // setter fires while restoring a saved record's DB, and
+                    // AvailableDatabases still holds the prior server's list
+                    // (which usually overlaps on names like master/msdb),
+                    // so the save would fire with a stale Label and clobber
+                    // the saved record's Label before the matching
+                    // Label = saved.Label assignment runs.
+                    if (!_isAutoFilling
+                        && !string.IsNullOrWhiteSpace(value)
                         && AvailableDatabases.Contains(value, StringComparer.OrdinalIgnoreCase))
                     {
                         SaveCurrentConnection();

@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.5] — 2026-05-18
+
+### Fixed
+- **Server label not updating after Start Over.** Picking a different server from the Side A / Side B dropdown after clicking Start Over left the Label field showing the previous server's label (e.g. switching from "DEV2" to a server saved as "DEV" kept "DEV2"). On Start Over the same connection-side viewmodel is reused, so `AvailableDatabases` still held the prior server's list. When auto-fill assigned `DatabaseName` from the saved record, the new DB name usually overlapped with the old list (common names like `master` / `msdb` / `Security`), which tripped the post-connect-save gate in the `DatabaseName` setter. That save fired with the still-stale `Label`, mutated the matching saved record's `Label` in place, and the subsequent `Label = saved.Label` assignment then became a no-op against the just-overwritten value — so the TextBox never refreshed. The save path is now suppressed during auto-fill, matching its original intent of capturing only user-initiated DB picks. Bug also silently corrupted labels in `connection-history.json` on every reproduction.
+
 ## [1.3.4] — 2026-05-18
 
 ### Fixed

@@ -25,7 +25,16 @@ namespace SQLParity.Vsix.Views
             InitializeComponent();
             LoadDdlPanelOptions();
             DataContextChanged += OnDataContextChanged;
-            Unloaded += (s, e) => _persistTimer?.Stop();
+            // Flush any pending debounced zoom-persist on unload (e.g. tool-window tab
+            // switch) so a just-made font change isn't lost.
+            Unloaded += (s, e) =>
+            {
+                if (_persistTimer?.IsEnabled == true)
+                {
+                    _persistTimer.Stop();
+                    PersistDdlPanelOptions();
+                }
+            };
         }
 
         private void LoadDdlPanelOptions()

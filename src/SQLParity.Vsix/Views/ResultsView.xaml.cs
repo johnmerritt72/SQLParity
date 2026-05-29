@@ -11,6 +11,7 @@ namespace SQLParity.Vsix.Views
     {
         private bool _isSyncingScroll;
         private bool _scrollingHooked;
+        private bool _zoomHandlersHooked;
 
         private const double MinFontSize = 6;
         private const double MaxFontSize = 40;
@@ -24,6 +25,7 @@ namespace SQLParity.Vsix.Views
             InitializeComponent();
             LoadDdlPanelOptions();
             DataContextChanged += OnDataContextChanged;
+            Unloaded += (s, e) => _persistTimer?.Stop();
         }
 
         private void LoadDdlPanelOptions()
@@ -90,8 +92,65 @@ namespace SQLParity.Vsix.Views
                     };
 
                     _scrollingHooked = true;
+                    HookDdlInputHandlers();
                 }
             }));
+        }
+
+        private void HookDdlInputHandlers()
+        {
+            if (_zoomHandlersHooked) return;
+            foreach (var box in new[] { DdlBoxA, DdlBoxB })
+            {
+                box.PreviewMouseWheel += DdlBox_PreviewMouseWheel;
+                box.PreviewKeyDown += DdlBox_PreviewKeyDown;
+                box.SizeChanged += DdlBox_SizeChanged;
+            }
+            _zoomHandlersHooked = true;
+        }
+
+        private void DdlBox_PreviewMouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
+        {
+            if ((System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Control) == 0)
+                return;
+            AdjustFontSize(e.Delta > 0 ? 1 : -1);
+            e.Handled = true;
+        }
+
+        private void DdlBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+        {
+            if ((System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Control) == 0)
+                return;
+
+            switch (e.Key)
+            {
+                case System.Windows.Input.Key.OemPlus:
+                case System.Windows.Input.Key.Add:
+                    AdjustFontSize(1);
+                    e.Handled = true;
+                    break;
+                case System.Windows.Input.Key.OemMinus:
+                case System.Windows.Input.Key.Subtract:
+                    AdjustFontSize(-1);
+                    e.Handled = true;
+                    break;
+                case System.Windows.Input.Key.D0:
+                case System.Windows.Input.Key.NumPad0:
+                    ResetFontSize();
+                    e.Handled = true;
+                    break;
+            }
+        }
+
+        // When not wrapping, the no-wrap PageWidth was computed from the previous panel
+        // width; recompute it (and repaint the gutter) when the panel is resized so short
+        // content fills a widened panel instead of staying at the old width.
+        private void DdlBox_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            if (_wrapPanels) return;
+            if (!e.WidthChanged) return;
+            if (sender is RichTextBox box)
+                ApplyWrapToBox(box);
         }
 
         private static ScrollViewer FindScrollViewer(DependencyObject parent)

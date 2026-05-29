@@ -360,25 +360,11 @@ namespace SQLParity.Vsix.Helpers
             };
         }
 
-        /// <summary>
-        /// Set to false to hide line numbers. Controlled by the Options page.
-        /// </summary>
-        public static bool ShowLineNumbers { get; set; } = true;
-
         private static Paragraph MakeNumberedParagraph(int lineNum, string text, SolidColorBrush background)
         {
-            var para = new Paragraph { Margin = new Thickness(0) };
+            var para = new Paragraph { Margin = new Thickness(0), Tag = lineNum };
             if (background != null)
                 para.Background = background;
-
-            if (ShowLineNumbers)
-            {
-                para.Inlines.Add(new Run(lineNum.ToString().PadLeft(4) + " ")
-                {
-                    Foreground = LineNumBrush,
-                    FontWeight = FontWeights.Normal,
-                });
-            }
 
             para.Inlines.Add(new Run(text));
             return para;
@@ -410,17 +396,8 @@ namespace SQLParity.Vsix.Helpers
 
         private static Paragraph MakeNumberedInlineDiff(int lineNum, string thisLine, string otherLine, bool isSource)
         {
-            var para = new Paragraph { Margin = new Thickness(0), Background = ModifiedLineBrush };
+            var para = new Paragraph { Margin = new Thickness(0), Background = ModifiedLineBrush, Tag = lineNum };
             var inlineBrush = isSource ? AddedInlineBrush : RemovedInlineBrush;
-
-            if (ShowLineNumbers)
-            {
-                para.Inlines.Add(new Run(lineNum.ToString().PadLeft(4) + " ")
-                {
-                    Foreground = LineNumBrush,
-                    FontWeight = FontWeights.Normal,
-                });
-            }
 
             AddInlineDiffRuns(para, thisLine, otherLine, inlineBrush);
             return para;

@@ -167,14 +167,6 @@ namespace SQLParity.Vsix.Views
                 return;
             }
 
-            try
-            {
-                var opts = Options.OptionsHelper.GetOptions();
-                if (opts != null)
-                    SimpleDiffHighlighter.ShowLineNumbers = opts.ShowLineNumbers;
-            }
-            catch { }
-
             var ddlA = vm.SelectedDdlA ?? string.Empty;
             var ddlB = vm.SelectedDdlB ?? string.Empty;
             var errorA = ExtractScriptError(ddlA);

@@ -53,12 +53,18 @@ namespace SQLParity.Vsix.Helpers
                 if (ReferenceEquals(_target, value)) return;
                 DetachScroll();
                 if (_target != null)
+                {
                     _target.SizeChanged -= OnTargetSizeChanged;
+                    _target.TextChanged -= OnTargetTextChanged;
+                }
 
                 _target = value;
 
                 if (_target != null)
+                {
                     _target.SizeChanged += OnTargetSizeChanged;
+                    _target.TextChanged += OnTargetTextChanged;
+                }
 
                 // The RichTextBox template (and its inner ScrollViewer) may not exist yet;
                 // defer hookup until WPF has applied the template.
@@ -100,6 +106,7 @@ namespace SQLParity.Vsix.Helpers
         }
 
         private void OnTargetSizeChanged(object sender, SizeChangedEventArgs e) => InvalidateVisual();
+        private void OnTargetTextChanged(object sender, TextChangedEventArgs e) => Refresh();
         private void OnScrollChanged(object sender, ScrollChangedEventArgs e) => InvalidateVisual();
 
         private void AttachScroll()
@@ -157,6 +164,8 @@ namespace SQLParity.Vsix.Helpers
 
         protected override Size MeasureOverride(Size availableSize)
         {
+            // Desired height is 0 by design: this control is meant to be docked Left in a
+            // DockPanel (or stretched in a Grid cell), where the parent supplies the height.
             return new Size(GutterWidth(), 0);
         }
 
@@ -175,13 +184,23 @@ namespace SQLParity.Vsix.Helpers
 
             double dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
 
-            // Find the first paragraph that is at/after the top of the viewport, so we only
+            // Find the first paragraph at/after the top of the viewport, so we only
             // GetCharacterRect/draw the visible range rather than every paragraph.
+            // GetPositionFromPoint may return a pointer inside a nested paragraph (e.g.
+            // within a List/Table), which would not be a direct child of doc.Blocks; walk
+            // up to the top-level block so the ReferenceEquals skip below can match. If we
+            // can't resolve a top-level Paragraph, fall back to iterating all paragraphs.
             Paragraph startPara = null;
             var topPointer = _target.GetPositionFromPoint(new Point(2, 2), true);
-            if (topPointer != null) startPara = topPointer.Paragraph;
+            if (topPointer != null)
+            {
+                FrameworkContentElement el = topPointer.Paragraph;
+                while (el != null && !(el is Paragraph fp && fp.Parent is FlowDocument))
+                    el = el.Parent as FrameworkContentElement;
+                startPara = el as Paragraph;
+            }
 
-            bool started = startPara == null; // if we couldn't locate one, just iterate all
+            bool started = startPara == null; // couldn't locate one → iterate all
             foreach (Block b in doc.Blocks)
             {
                 if (!(b is Paragraph p)) continue;

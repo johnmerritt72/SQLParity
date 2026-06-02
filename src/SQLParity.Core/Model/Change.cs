@@ -51,6 +51,20 @@ public sealed class Change
     /// </summary>
     public required IList<ColumnChange> ColumnChanges { get; set; }
 
+    /// <summary>
+    /// Permission-level sub-changes for this object (object- or schema-level
+    /// grants). Empty when permissions match or weren't compared. Mirrors
+    /// <see cref="ColumnChanges"/>.
+    /// </summary>
+    public IList<PermissionChange> PermissionChanges { get; set; } = new List<PermissionChange>();
+
+    /// <summary>
+    /// True when this Change exists solely because permissions differ (object DDL
+    /// is identical on both sides). The script generator skips emitting object DDL
+    /// for these — only their grants are emitted in the Permissions section.
+    /// </summary>
+    public bool IsPermissionOnlyChange { get; set; }
+
     /// <summary>Pre-flight query SQL (null if not applicable).</summary>
     public string? PreFlightSql { get; set; }
 

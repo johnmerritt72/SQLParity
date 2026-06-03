@@ -28,7 +28,7 @@ public sealed class DatabaseSchema
     /// Empty when permissions were not read (folder side, or IncludePermissions off).
     /// </summary>
     public IReadOnlyList<PermissionModel> Permissions { get; init; }
-        = System.Array.Empty<PermissionModel>();
+        = Array.Empty<PermissionModel>();
 
     /// <summary>
     /// Map of (schema, object name) → list of external database / linked-server

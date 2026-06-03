@@ -15,8 +15,11 @@ public enum PermissionClass
 /// <summary>The state of a permission as stored in sys.database_permissions.</summary>
 public enum PermissionState
 {
+    /// <summary>A plain GRANT.</summary>
     Grant,
+    /// <summary>A GRANT WITH GRANT OPTION (grantee may re-grant to others).</summary>
     GrantWithGrant,
+    /// <summary>A DENY (explicitly blocks access, overrides grants).</summary>
     Deny
 }
 
@@ -47,8 +50,12 @@ public sealed class PermissionChange
 {
     public required string GranteeName { get; init; }
     public required string PermissionName { get; init; }
-    public PermissionState? StateSideA { get; init; }   // null = absent on A (source)
-    public PermissionState? StateSideB { get; init; }   // null = absent on B (destination)
+
+    /// <summary>State on Side A (the source). Null when the permission is absent on A.</summary>
+    public PermissionState? StateSideA { get; init; }
+
+    /// <summary>State on Side B (the destination). Null when the permission is absent on B.</summary>
+    public PermissionState? StateSideB { get; init; }
 
     public RiskTier Risk { get; set; }
     public IReadOnlyList<RiskReason> Reasons { get; set; } = Array.Empty<RiskReason>();

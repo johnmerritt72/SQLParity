@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Linq;
 using SQLParity.Core.Comparison;
 using SQLParity.Core.Model;
 using Xunit;
@@ -107,6 +106,8 @@ public class PermissionComparatorTests
         var diff = PermissionComparator.Compare(a, new PermissionModel[0]);
         var key = new PermissionTargetKey(PermissionClass.Schema, "sales", "sales");
         Assert.True(diff.ContainsKey(key));
-        Assert.Single(diff[key]);
+        var pc = Assert.Single(diff[key]);
+        Assert.Equal("AppRole", pc.GranteeName);
+        Assert.Equal(PermissionState.Grant, pc.StateSideA);
     }
 }

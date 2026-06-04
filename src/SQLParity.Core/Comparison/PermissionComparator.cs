@@ -55,10 +55,10 @@ public static class PermissionComparator
 
         foreach (var target in allTargets)
         {
-            byTargetA.TryGetValue(target, out var aMap);
-            byTargetB.TryGetValue(target, out var bMap);
-            aMap ??= EmptyGranteePermMap;
-            bMap ??= EmptyGranteePermMap;
+            IReadOnlyDictionary<GranteePermKey, PermissionState> aMap =
+                byTargetA.TryGetValue(target, out var a) ? a : EmptyGranteePermMap;
+            IReadOnlyDictionary<GranteePermKey, PermissionState> bMap =
+                byTargetB.TryGetValue(target, out var b) ? b : EmptyGranteePermMap;
 
             // Union of (grantee, perm) keys for this target.
             var keys = new HashSet<GranteePermKey>(aMap.Keys);
@@ -89,7 +89,8 @@ public static class PermissionComparator
         return result;
     }
 
-    private static readonly Dictionary<GranteePermKey, PermissionState> EmptyGranteePermMap = new();
+    private static readonly IReadOnlyDictionary<GranteePermKey, PermissionState> EmptyGranteePermMap
+        = new Dictionary<GranteePermKey, PermissionState>();
 
     private static Dictionary<PermissionTargetKey, Dictionary<GranteePermKey, PermissionState>> IndexByTarget(
         IReadOnlyList<PermissionModel> perms)

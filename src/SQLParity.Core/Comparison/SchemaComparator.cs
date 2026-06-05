@@ -152,6 +152,14 @@ public static class SchemaComparator
         if (limitToFolderObjects)
             changes.RemoveAll(c => c.Status == ChangeStatus.New && c.RenameCandidateNames.Count == 0);
 
+        // Permission comparison (object- and schema-level). Live-vs-live only:
+        // skipped when Side B is a folder (Side A is always live) or when the
+        // option is off. Attaches PermissionChanges to existing Changes and
+        // emits permission-only Modified changes for objects whose DDL matches
+        // but whose grants differ.
+        if (options.IncludePermissions && !sideBIsFolder)
+            AttachPermissionChanges(changes, sideA, sideB);
+
         // Classify column-level risk first so RiskClassifier can aggregate them.
         foreach (var change in changes)
         {
@@ -163,12 +171,48 @@ public static class SchemaComparator
             }
         }
 
-        // Classify top-level change risk.
+        // Classify top-level change risk, folding in permission-change risk.
         foreach (var change in changes)
         {
-            var (tier, reasons) = RiskClassifier.Classify(change);
-            change.Risk = tier;
-            change.Reasons = reasons;
+            // Classify each permission change first.
+            foreach (var pc in change.PermissionChanges)
+            {
+                var (pcTier, pcReasons) = PermissionRiskClassifier.Classify(pc);
+                pc.Risk = pcTier;
+                pc.Reasons = pcReasons;
+            }
+
+            RiskTier maxTier;
+            List<RiskReason> allReasons;
+
+            if (change.IsPermissionOnlyChange)
+            {
+                // Object DDL is identical — don't use RiskClassifier's "definition
+                // changed" reason. The permission tiers below drive the result.
+                maxTier = RiskTier.Safe;
+                allReasons = new List<RiskReason>
+                {
+                    new RiskReason { Tier = RiskTier.Safe, Description = "Permissions changed." },
+                };
+            }
+            else
+            {
+                var (tier, reasons) = RiskClassifier.Classify(change);
+                maxTier = tier;
+                allReasons = new List<RiskReason>(reasons);
+            }
+
+            foreach (var pc in change.PermissionChanges)
+            {
+                allReasons.AddRange(pc.Reasons);
+                // New-object grants ride along with creation; they don't elevate
+                // the parent's tier above its New (Safe) classification.
+                if (change.Status != ChangeStatus.New && pc.Risk > maxTier)
+                    maxTier = pc.Risk;
+            }
+
+            change.Risk = maxTier;
+            change.Reasons = allReasons;
         }
 
         // Attach external references from the source side (the side whose DDL
@@ -266,6 +310,136 @@ public static class SchemaComparator
             c.RenameCandidateNames.Add(matchedNew.Id.Name);
             matchedNew.RenameCandidateNames.Add(c.Id.Name);
         }
+    }
+
+    /// <summary>
+    /// Maps an ObjectType to the PermissionClass its permissions are keyed under,
+    /// or null when the type is not a permission-comparable securable.
+    /// </summary>
+    private static PermissionClass? PermissionClassFor(ObjectType type) => type switch
+    {
+        ObjectType.Table => PermissionClass.Object,
+        ObjectType.View => PermissionClass.Object,
+        ObjectType.StoredProcedure => PermissionClass.Object,
+        ObjectType.UserDefinedFunction => PermissionClass.Object,
+        ObjectType.Sequence => PermissionClass.Object,
+        ObjectType.UserDefinedDataType => PermissionClass.Object,
+        ObjectType.UserDefinedTableType => PermissionClass.Object,
+        ObjectType.Schema => PermissionClass.Schema,
+        _ => null,
+    };
+
+    /// <summary>
+    /// Attaches permission sub-changes to existing object Changes, and creates new
+    /// permission-only Modified changes for objects that exist (identically) on both
+    /// sides but whose grants differ.
+    /// </summary>
+    private static void AttachPermissionChanges(
+        List<Change> changes, DatabaseSchema sideA, DatabaseSchema sideB)
+    {
+        var diff = PermissionComparator.Compare(sideA.Permissions, sideB.Permissions);
+        if (diff.Count == 0) return;
+
+        // Index existing changes by (class, schema, name).
+        var changeByKey = new Dictionary<PermissionTargetKey, Change>();
+        foreach (var c in changes)
+        {
+            var cls = PermissionClassFor(c.ObjectType);
+            if (cls is null) continue;
+            changeByKey[new PermissionTargetKey(cls.Value, c.Id.Schema, c.Id.Name)] = c;
+        }
+
+        // Index object DDL present on BOTH sides, for permission-only change creation.
+        // Key -> (objectType, ddlA, ddlB). Only objects present on both sides qualify
+        // (a one-sided object already produced a New/Dropped change handled above).
+        var bothSides = BuildBothSidesDdlIndex(sideA, sideB);
+
+        foreach (var kvp in diff)
+        {
+            var target = kvp.Key;
+            var permChanges = kvp.Value;
+
+            if (changeByKey.TryGetValue(target, out var existing))
+            {
+                // Dropped objects: grants are moot (object is being dropped).
+                if (existing.Status == ChangeStatus.Dropped) continue;
+                foreach (var pc in permChanges)
+                    existing.PermissionChanges.Add(pc);
+                continue;
+            }
+
+            // No existing change: object is identical on both sides (or not present).
+            if (!bothSides.TryGetValue(target, out var info)) continue;
+
+            var permOnly = new Change
+            {
+                Id = info.ObjectType == ObjectType.Schema
+                    ? SchemaQualifiedName.TopLevel(target.Name, target.Name)
+                    : SchemaQualifiedName.TopLevel(target.Schema, target.Name),
+                ObjectType = info.ObjectType,
+                Status = ChangeStatus.Modified,
+                DdlSideA = info.DdlA,
+                DdlSideB = info.DdlB,
+                ColumnChanges = Array.Empty<ColumnChange>(),
+                IsPermissionOnlyChange = true,
+            };
+            foreach (var pc in permChanges)
+                permOnly.PermissionChanges.Add(pc);
+            changes.Add(permOnly);
+        }
+    }
+
+    private readonly struct DdlPair
+    {
+        public ObjectType ObjectType { get; }
+        public string DdlA { get; }
+        public string DdlB { get; }
+        public DdlPair(ObjectType type, string ddlA, string ddlB)
+        {
+            ObjectType = type; DdlA = ddlA; DdlB = ddlB;
+        }
+    }
+
+    private static Dictionary<PermissionTargetKey, DdlPair> BuildBothSidesDdlIndex(
+        DatabaseSchema a, DatabaseSchema b)
+    {
+        var index = new Dictionary<PermissionTargetKey, DdlPair>();
+
+        void AddPair(
+            ObjectType type, PermissionClass cls,
+            Func<DatabaseSchema, IEnumerable<(string Schema, string Name, string Ddl)>> selector)
+        {
+            var aMap = new Dictionary<PermissionTargetKey, string>();
+            foreach (var (schema, name, ddl) in selector(a))
+                aMap[new PermissionTargetKey(cls, schema, name)] = ddl;
+            foreach (var (schema, name, ddl) in selector(b))
+            {
+                var key = new PermissionTargetKey(cls, schema, name);
+                if (aMap.TryGetValue(key, out var ddlA))
+                    index[key] = new DdlPair(type, ddlA, ddl);
+            }
+        }
+
+        AddPair(ObjectType.StoredProcedure, PermissionClass.Object,
+            s => s.StoredProcedures.Select(p => (p.Id.Schema, p.Id.Name, p.Ddl)));
+        AddPair(ObjectType.UserDefinedFunction, PermissionClass.Object,
+            s => s.Functions.Select(f => (f.Id.Schema, f.Id.Name, f.Ddl)));
+        AddPair(ObjectType.View, PermissionClass.Object,
+            s => s.Views.Select(v => (v.Id.Schema, v.Id.Name, v.Ddl)));
+        AddPair(ObjectType.Sequence, PermissionClass.Object,
+            s => s.Sequences.Select(x => (x.Id.Schema, x.Id.Name, x.Ddl)));
+        AddPair(ObjectType.Synonym, PermissionClass.Object,
+            s => s.Synonyms.Select(x => (x.Id.Schema, x.Id.Name, x.Ddl)));
+        AddPair(ObjectType.UserDefinedDataType, PermissionClass.Object,
+            s => s.UserDefinedDataTypes.Select(x => (x.Id.Schema, x.Id.Name, x.Ddl)));
+        AddPair(ObjectType.UserDefinedTableType, PermissionClass.Object,
+            s => s.UserDefinedTableTypes.Select(x => (x.Id.Schema, x.Id.Name, x.Ddl)));
+        AddPair(ObjectType.Table, PermissionClass.Object,
+            s => s.Tables.Select(t => (t.Id.Schema, t.Id.Name, t.Ddl)));
+        AddPair(ObjectType.Schema, PermissionClass.Schema,
+            s => s.Schemas.Select(sc => (sc.Name, sc.Name, sc.Ddl)));
+
+        return index;
     }
 
     private static bool IsRoutineLikeType(ObjectType t) => t switch

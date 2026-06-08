@@ -18,6 +18,15 @@ public class SchemaComparatorPermissionTests
         Ddl = ddl,
     };
 
+    private static SynonymModel Syn(string name, string ddl) => new()
+    {
+        Id = SchemaQualifiedName.TopLevel("dbo", name),
+        Schema = "dbo",
+        Name = name,
+        BaseObject = string.Empty,
+        Ddl = ddl,
+    };
+
     private static PermissionModel ProcGrant(string proc, string grantee, PermissionState state) => new()
     {
         Class = PermissionClass.Object,
@@ -28,9 +37,20 @@ public class SchemaComparatorPermissionTests
         TargetName = proc,
     };
 
+    private static PermissionModel SynGrant(string syn, string grantee, PermissionState state) => new()
+    {
+        Class = PermissionClass.Object,
+        GranteeName = grantee,
+        PermissionName = "SELECT",
+        State = state,
+        TargetSchema = "dbo",
+        TargetName = syn,
+    };
+
     private static DatabaseSchema Schema(
         IReadOnlyList<StoredProcedureModel> procs,
-        IReadOnlyList<PermissionModel> perms) => new()
+        IReadOnlyList<PermissionModel> perms,
+        IReadOnlyList<SynonymModel>? synonyms = null) => new()
     {
         ServerName = "S",
         DatabaseName = "D",
@@ -41,7 +61,7 @@ public class SchemaComparatorPermissionTests
         StoredProcedures = procs,
         Functions = Array.Empty<UserDefinedFunctionModel>(),
         Sequences = Array.Empty<SequenceModel>(),
-        Synonyms = Array.Empty<SynonymModel>(),
+        Synonyms = synonyms ?? Array.Empty<SynonymModel>(),
         UserDefinedDataTypes = Array.Empty<UserDefinedDataTypeModel>(),
         UserDefinedTableTypes = Array.Empty<UserDefinedTableTypeModel>(),
         Permissions = perms,
@@ -122,5 +142,28 @@ public class SchemaComparatorPermissionTests
         var result = SchemaComparator.Compare(a, b, opts);
 
         Assert.Empty(result.Changes);
+    }
+
+    [Fact]
+    public void ModifiedSynonym_WithGrantDiff_ProducesSingleChange_NotDuplicate()
+    {
+        // Synonym differs in DDL (Modified) AND has a grant difference. The grant
+        // diff must attach to the existing Modified change, not spawn a second one.
+        var synA = Syn("S", "CREATE SYNONYM [dbo].[S] FOR [dbo].[TargetA]");
+        var synB = Syn("S", "CREATE SYNONYM [dbo].[S] FOR [dbo].[TargetB]");
+
+        var a = Schema(Array.Empty<StoredProcedureModel>(),
+            new[] { SynGrant("S", "AppRole", PermissionState.Grant) },
+            synonyms: new[] { synA });
+        var b = Schema(Array.Empty<StoredProcedureModel>(),
+            Array.Empty<PermissionModel>(),
+            synonyms: new[] { synB });
+
+        var result = SchemaComparator.Compare(a, b, SchemaReadOptions.All);
+
+        var change = Assert.Single(result.Changes);   // exactly one — no duplicate
+        Assert.Equal(ObjectType.Synonym, change.ObjectType);
+        Assert.Equal(ChangeStatus.Modified, change.Status);
+        Assert.Single(change.PermissionChanges);
     }
 }

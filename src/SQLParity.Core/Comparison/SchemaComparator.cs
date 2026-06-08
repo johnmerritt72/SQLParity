@@ -323,6 +323,7 @@ public static class SchemaComparator
         ObjectType.StoredProcedure => PermissionClass.Object,
         ObjectType.UserDefinedFunction => PermissionClass.Object,
         ObjectType.Sequence => PermissionClass.Object,
+        ObjectType.Synonym => PermissionClass.Object,
         ObjectType.UserDefinedDataType => PermissionClass.Object,
         ObjectType.UserDefinedTableType => PermissionClass.Object,
         ObjectType.Schema => PermissionClass.Schema,
@@ -368,13 +369,19 @@ public static class SchemaComparator
                 continue;
             }
 
-            // No existing change: object is identical on both sides (or not present).
+            // Reaching here means no existing Change matched this target — so the
+            // object is either identical on both sides, or absent. bothSides also
+            // contains DDL-differs (Modified) objects, but those were already indexed
+            // in changeByKey above and handled by the branch above, so they never
+            // reach this point. (Note: we deliberately do NOT filter bothSides by raw
+            // DDL equality — a whitespace-only difference is normalizer-equal and
+            // produces no Change, yet its permission diff must still surface here.)
             if (!bothSides.TryGetValue(target, out var info)) continue;
 
             var permOnly = new Change
             {
                 Id = info.ObjectType == ObjectType.Schema
-                    ? SchemaQualifiedName.TopLevel(target.Name, target.Name)
+                    ? SchemaQualifiedName.TopLevel(target.Schema, target.Name)
                     : SchemaQualifiedName.TopLevel(target.Schema, target.Name),
                 ObjectType = info.ObjectType,
                 Status = ChangeStatus.Modified,
@@ -396,7 +403,9 @@ public static class SchemaComparator
         public string DdlB { get; }
         public DdlPair(ObjectType type, string ddlA, string ddlB)
         {
-            ObjectType = type; DdlA = ddlA; DdlB = ddlB;
+            ObjectType = type;
+            DdlA = ddlA;
+            DdlB = ddlB;
         }
     }
 

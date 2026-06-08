@@ -33,9 +33,11 @@ GO
 public class PermissionReaderTests : IClassFixture<PermissionFixture>
 {
     private readonly IReadOnlyList<PermissionModel> _perms;
+    private readonly string _connStringForWiring;
 
     public PermissionReaderTests(PermissionFixture fixture)
     {
+        _connStringForWiring = fixture.ConnectionString;
         _perms = PermissionReader.Read(fixture.ConnectionString);
     }
 
@@ -82,5 +84,20 @@ public class PermissionReaderTests : IClassFixture<PermissionFixture>
         Assert.DoesNotContain(_perms, x =>
             x.GranteeName == "dbo" || x.GranteeName == "sys"
             || x.GranteeName == "guest" || x.GranteeName == "INFORMATION_SCHEMA");
+    }
+
+    [Fact]
+    public void SchemaReader_PopulatesPermissions()
+    {
+        // Re-read through the full SchemaReader to verify wiring.
+        // The fixture connection string carries the DB name in Initial Catalog,
+        // but SchemaReader needs it explicitly.
+        var builder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(
+            _connStringForWiring);
+        var reader = new SchemaReader(_connStringForWiring, builder.InitialCatalog);
+        var schema = reader.ReadSchema();
+
+        Assert.Contains(schema.Permissions, p =>
+            p.TargetName == "DoThing" && p.GranteeName == "AppRole");
     }
 }

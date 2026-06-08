@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.4.1] — 2026-06-08
+
+### Added
+- **Object & schema permission comparison.** SQLParity now reads `sys.database_permissions` and compares object-level grants (tables, views, stored procedures, functions, sequences, user-defined types) and schema-level grants between two databases, distinguishing GRANT / GRANT WITH GRANT OPTION / DENY. On by default for live-vs-live comparisons via a new "Permissions" object-type toggle (disabled in folder mode). `public` is included; system principals (sys, INFORMATION_SCHEMA, guest, dbo, fixed roles) and column-level grants are excluded.
+- **Permission changes as a first-class diff dimension.** Grant differences attach as sub-changes on each object's change; an object whose body is identical but whose grants differ surfaces as Modified. Risk tiers: granting = Caution, WITH GRANT OPTION / DENY = Risky, revoking = Destructive (gated by the destructive-change gauntlet).
+- **Permissions in the sync script.** A dedicated Permissions section emits GRANT / DENY / REVOKE after the target objects exist; each grantee is guarded by an existence check that hard-fails via THROW if the principal is missing on the destination.
+- **Permission visibility in the UI.** A "🔑 permissions" tag marks objects with grant changes in the change list, and a "Permissions" group in the detail pane lists each change (grantee, permission, state transition) for all object types, not just tables.
+
+### Internal
+- Build now verifies the version inside the packaged `.vsix` matches `version.txt` (`VerifyPackagedVsixVersion` target) and fails the build on a mismatch, preventing an incremental build from shipping a stale package that installs as the already-installed version.
+
 ## [1.3.6] — 2026-05-29
 
 ### Added

@@ -380,9 +380,9 @@ public static class SchemaComparator
 
             var permOnly = new Change
             {
-                Id = info.ObjectType == ObjectType.Schema
-                    ? SchemaQualifiedName.TopLevel(target.Schema, target.Name)
-                    : SchemaQualifiedName.TopLevel(target.Schema, target.Name),
+                // For a schema-class target, target.Schema == target.Name (both the
+                // schema name), so a single call is correct for every object type.
+                Id = SchemaQualifiedName.TopLevel(target.Schema, target.Name),
                 ObjectType = info.ObjectType,
                 Status = ChangeStatus.Modified,
                 DdlSideA = info.DdlA,

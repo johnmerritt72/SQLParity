@@ -237,7 +237,7 @@ public sealed class SchemaReader
         // option; the comparator additionally skips permissions for folder mode.
         var permissions = options.IncludePermissions
             ? PermissionReader.Read(_connectionString)
-            : (System.Collections.Generic.IReadOnlyList<PermissionModel>)System.Array.Empty<PermissionModel>();
+            : (IReadOnlyList<PermissionModel>)Array.Empty<PermissionModel>();
 
         perfLog.Finish();
 

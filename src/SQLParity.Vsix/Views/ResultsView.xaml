@@ -263,6 +263,23 @@
                                     </TextBlock.Style>
                                 </TextBlock>
 
+                                <!-- Permission-change indicator -->
+                                <TextBlock Text="🔑 permissions"
+                                           Margin="6,0,0,0" FontSize="10" FontWeight="Bold"
+                                           Foreground="#00695C"
+                                           ToolTip="{Binding PermissionChangesTooltip}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding HasPermissionChanges}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+
                                 <!-- Typo-rename pair: warning glyph (shown when filename != CREATE name and a pair candidate exists) -->
                                 <TextBlock Text="⚠"
                                            Margin="6,0,0,0" FontSize="10" FontWeight="Bold"
@@ -358,7 +375,7 @@
                             <Style TargetType="views:TableDetailView">
                                 <Setter Property="Visibility" Value="Collapsed" />
                                 <Style.Triggers>
-                                    <DataTrigger Binding="{Binding DataContext.IsTableSelected, RelativeSource={RelativeSource AncestorType=views:ResultsView}}" Value="True">
+                                    <DataTrigger Binding="{Binding DataContext.ShowDetailTree, RelativeSource={RelativeSource AncestorType=views:ResultsView}}" Value="True">
                                         <Setter Property="Visibility" Value="Visible" />
                                     </DataTrigger>
                                 </Style.Triggers>

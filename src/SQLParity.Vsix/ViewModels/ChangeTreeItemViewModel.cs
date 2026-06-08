@@ -53,6 +53,30 @@ namespace SQLParity.Vsix.ViewModels
             }
         }
 
+        /// <summary>True if this change includes object/schema permission (grant) differences.</summary>
+        public bool HasPermissionChanges =>
+            Change != null && Change.PermissionChanges != null && Change.PermissionChanges.Count > 0;
+
+        /// <summary>Tooltip listing the permission differences (grantee, permission, state transition).</summary>
+        public string PermissionChangesTooltip
+        {
+            get
+            {
+                if (!HasPermissionChanges) return string.Empty;
+                var lines = new List<string>();
+                foreach (var pc in Change.PermissionChanges)
+                {
+                    string Describe(PermissionState? s) =>
+                        s == PermissionState.Grant ? "GRANT"
+                        : s == PermissionState.GrantWithGrant ? "GRANT (WITH GRANT OPTION)"
+                        : s == PermissionState.Deny ? "DENY"
+                        : "none";
+                    lines.Add($"{pc.PermissionName} → [{pc.GranteeName}]: {Describe(pc.StateSideB)} ⇒ {Describe(pc.StateSideA)}");
+                }
+                return "Permission differences:\n\n• " + string.Join("\n• ", lines);
+            }
+        }
+
         /// <summary>
         /// Names of orphan-counterpart candidates this leaf could be paired with
         /// (filename matches a DB-orphan's name, or vice versa). Empty when there's

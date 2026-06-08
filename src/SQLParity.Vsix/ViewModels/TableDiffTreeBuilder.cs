@@ -234,6 +234,22 @@ namespace SQLParity.Vsix.ViewModels
             return group;
         }
 
+        /// <summary>
+        /// Builds a tree containing only the Permissions group, for non-table
+        /// objects (procs, views, functions, schemas, etc.) whose grants differ.
+        /// Returns an empty collection when there are no permission changes.
+        /// </summary>
+        public static ObservableCollection<TableTreeNode> BuildPermissionsOnly(
+            IList<PermissionChange> permissionChanges,
+            bool reverseDirection)
+        {
+            var root = new ObservableCollection<TableTreeNode>();
+            var group = BuildPermissionsGroup(permissionChanges, reverseDirection);
+            if (group != null)
+                root.Add(group);
+            return root;
+        }
+
         private static TableTreeNode BuildPermissionsGroup(
             IList<PermissionChange> permissionChanges,
             bool reverseDirection)

@@ -18,6 +18,7 @@ namespace SQLParity.Vsix.ViewModels
         private DispatcherTimer _toastTimer;
         private ObservableCollection<TableTreeNode> _tableTreeItems;
         private bool _isTableSelected;
+        private bool _showDetailTree;
         private string _filterText = string.Empty;
         private string _defaultDbNameA = string.Empty;
 
@@ -306,6 +307,17 @@ namespace SQLParity.Vsix.ViewModels
         {
             get => _isTableSelected;
             set => SetProperty(ref _isTableSelected, value);
+        }
+
+        /// <summary>
+        /// True when the detail tree (TableDetailView) should be shown — either a
+        /// table's column/constraint tree, or a non-table object's Permissions
+        /// group. Drives the detail-tree panel's visibility.
+        /// </summary>
+        public bool ShowDetailTree
+        {
+            get => _showDetailTree;
+            set => SetProperty(ref _showDetailTree, value);
         }
 
         public ChangeTreeItemViewModel SelectedTreeItem
@@ -665,6 +677,8 @@ namespace SQLParity.Vsix.ViewModels
         private void UpdateTableTree()
         {
             var change = SelectedChange;
+            bool reverseDirection = Direction.Direction == SyncDirection.BtoA;
+
             if (change != null && change.ObjectType == ObjectType.Table && _comparisonResult != null)
             {
                 var tableId = change.Id;
@@ -672,15 +686,24 @@ namespace SQLParity.Vsix.ViewModels
                 TableModel tableB = _comparisonResult.SideB.Tables.FirstOrDefault(t => t.Id.Equals(tableId));
 
                 var columnChanges = change.ColumnChanges ?? (IList<ColumnChange>)new ColumnChange[0];
-                bool reverseDirection = Direction.Direction == SyncDirection.BtoA;
                 TableTreeItems = TableDiffTreeBuilder.Build(tableA, tableB, columnChanges, reverseDirection,
                     ApplyRenameCommand, UndoRenameCommand, change.PermissionChanges);
                 IsTableSelected = true;
+                ShowDetailTree = true;
+            }
+            else if (change != null && change.PermissionChanges != null && change.PermissionChanges.Count > 0)
+            {
+                // Non-table object (proc/view/function/schema/etc.) whose permissions
+                // differ: show just the Permissions group above the DDL diff.
+                TableTreeItems = TableDiffTreeBuilder.BuildPermissionsOnly(change.PermissionChanges, reverseDirection);
+                IsTableSelected = false;
+                ShowDetailTree = true;
             }
             else
             {
                 TableTreeItems = null;
                 IsTableSelected = false;
+                ShowDetailTree = false;
             }
         }
 

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using SQLParity.Core;
 using SQLParity.Core.Model;
@@ -31,7 +32,7 @@ GO
 
 public class PermissionReaderTests : IClassFixture<PermissionFixture>
 {
-    private readonly System.Collections.Generic.IReadOnlyList<PermissionModel> _perms;
+    private readonly IReadOnlyList<PermissionModel> _perms;
 
     public PermissionReaderTests(PermissionFixture fixture)
     {

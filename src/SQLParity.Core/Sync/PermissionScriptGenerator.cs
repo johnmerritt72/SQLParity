@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using SQLParity.Core.Model;
 
@@ -7,7 +8,7 @@ namespace SQLParity.Core.Sync;
 /// <summary>
 /// Renders GRANT/DENY/REVOKE statements for a Change's permission sub-changes.
 /// The parent Change's ObjectType decides OBJECT:: vs SCHEMA:: scope. Each
-/// distinct grantee is preceded by an existence guard that hard-fails (RAISERROR)
+/// distinct grantee is preceded by an existence guard that hard-fails (THROW)
 /// if the principal is missing on the destination.
 /// </summary>
 public static class PermissionScriptGenerator
@@ -39,17 +40,17 @@ public static class PermissionScriptGenerator
             list.Add(pc);
         }
 
-        foreach (var kvp in byGrantee)
+        foreach (var grantee in byGrantee.Keys.OrderBy(g => g, System.StringComparer.OrdinalIgnoreCase))
         {
-            string grantee = kvp.Key;
+            var granteeChanges = byGrantee[grantee];
             string granteeLiteral = grantee.Replace("'", "''");
 
             sb.AppendLine(
                 $"IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'{granteeLiteral}')");
             sb.AppendLine(
-                $"    RAISERROR('Principal [{granteeLiteral}] does not exist on destination — cannot apply its permissions.', 16, 1);");
+                $"    THROW 50000, 'Principal [{granteeLiteral}] does not exist on destination — cannot apply its permissions.', 1;");
 
-            foreach (var pc in kvp.Value)
+            foreach (var pc in granteeChanges.OrderBy(p => p.PermissionName, System.StringComparer.OrdinalIgnoreCase))
                 foreach (var stmt in StatementsFor(pc, scope, grantee))
                     sb.AppendLine(stmt);
         }

@@ -65,7 +65,7 @@ public class PermissionScriptGeneratorTests
     {
         var sql = PermissionScriptGenerator.Generate(ProcChange(
             PC("AppRole", "SELECT", null, PermissionState.GrantWithGrant)));
-        Assert.Contains("CASCADE", sql);
+        Assert.Contains("REVOKE SELECT ON OBJECT::[dbo].[MyProc] FROM [AppRole] CASCADE;", sql);
     }
 
     [Fact]
@@ -74,7 +74,7 @@ public class PermissionScriptGeneratorTests
         var sql = PermissionScriptGenerator.Generate(ProcChange(
             PC("AppRole", "EXECUTE", PermissionState.Grant, null)));
         Assert.Contains("sys.database_principals", sql);
-        Assert.Contains("RAISERROR", sql);
+        Assert.Contains("THROW", sql);
         Assert.Contains("AppRole", sql);
     }
 
@@ -98,5 +98,17 @@ public class PermissionScriptGeneratorTests
     {
         var sql = PermissionScriptGenerator.Generate(ProcChange());
         Assert.Equal(string.Empty, sql);
+    }
+
+    [Fact]
+    public void MultipleGrantees_EmittedInAlphabeticalOrder()
+    {
+        var sql = PermissionScriptGenerator.Generate(ProcChange(
+            PC("Zeta", "EXECUTE", PermissionState.Grant, null),
+            PC("Alpha", "EXECUTE", PermissionState.Grant, null)));
+        int alpha = sql.IndexOf("[Alpha]", System.StringComparison.Ordinal);
+        int zeta = sql.IndexOf("[Zeta]", System.StringComparison.Ordinal);
+        Assert.True(alpha >= 0 && zeta >= 0);
+        Assert.True(alpha < zeta, "Alpha grantee block should precede Zeta");
     }
 }

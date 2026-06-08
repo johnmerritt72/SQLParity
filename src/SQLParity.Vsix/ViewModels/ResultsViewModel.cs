@@ -674,7 +674,7 @@ namespace SQLParity.Vsix.ViewModels
                 var columnChanges = change.ColumnChanges ?? (IList<ColumnChange>)new ColumnChange[0];
                 bool reverseDirection = Direction.Direction == SyncDirection.BtoA;
                 TableTreeItems = TableDiffTreeBuilder.Build(tableA, tableB, columnChanges, reverseDirection,
-                    ApplyRenameCommand, UndoRenameCommand);
+                    ApplyRenameCommand, UndoRenameCommand, change.PermissionChanges);
                 IsTableSelected = true;
             }
             else

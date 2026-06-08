@@ -76,7 +76,8 @@ namespace SQLParity.Vsix.ViewModels
             IList<ColumnChange> columnChanges,
             bool reverseDirection = false,
             ICommand applyRenameCommand = null,
-            ICommand undoRenameCommand = null)
+            ICommand undoRenameCommand = null,
+            IList<PermissionChange> permissionChanges = null)
         {
             var root = new ObservableCollection<TableTreeNode>();
 
@@ -99,6 +100,10 @@ namespace SQLParity.Vsix.ViewModels
             root.Add(BuildNameMatchGroup("Triggers",
                 tableA?.Triggers, tableB?.Triggers,
                 t => t.Name, FormatTrigger, reverseDirection));
+
+            var permsGroup = BuildPermissionsGroup(permissionChanges, reverseDirection);
+            if (permsGroup != null)
+                root.Add(permsGroup);
 
             return root;
         }
@@ -227,6 +232,55 @@ namespace SQLParity.Vsix.ViewModels
             }
 
             return group;
+        }
+
+        private static TableTreeNode BuildPermissionsGroup(
+            IList<PermissionChange> permissionChanges,
+            bool reverseDirection)
+        {
+            if (permissionChanges == null || permissionChanges.Count == 0)
+                return null;
+
+            var group = new TableTreeNode { DisplayName = "Permissions", IsGroup = true };
+
+            foreach (var pc in permissionChanges)
+            {
+                ChangeStatus status;
+                if (pc.StateSideA != null && pc.StateSideB == null) status = ChangeStatus.New;
+                else if (pc.StateSideA == null && pc.StateSideB != null) status = ChangeStatus.Dropped;
+                else status = ChangeStatus.Modified;
+
+                if (reverseDirection)
+                {
+                    if (status == ChangeStatus.New) status = ChangeStatus.Dropped;
+                    else if (status == ChangeStatus.Dropped) status = ChangeStatus.New;
+                }
+
+                var node = new TableTreeNode
+                {
+                    Status = status,
+                    StatusIcon = ChangeTreeItemViewModel.GetStatusIcon(status, reverseDirection),
+                    RiskIcon = ChangeTreeItemViewModel.GetRiskIcon(pc.Risk),
+                    Risk = pc.Risk,
+                    IsStrikethrough = status == ChangeStatus.Dropped,
+                    DisplayName = FormatPermissionChange(pc),
+                };
+                group.Children.Add(node);
+            }
+
+            return group;
+        }
+
+        private static string FormatPermissionChange(PermissionChange pc)
+        {
+            string Describe(PermissionState? s) => s switch
+            {
+                PermissionState.Grant => "GRANT",
+                PermissionState.GrantWithGrant => "GRANT (WITH GRANT OPTION)",
+                PermissionState.Deny => "DENY",
+                _ => "none",
+            };
+            return $"{pc.PermissionName} → [{pc.GranteeName}]: {Describe(pc.StateSideB)} ⇒ {Describe(pc.StateSideA)}";
         }
 
         /// <summary>

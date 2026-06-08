@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using SQLParity.Core.Model;
 using SQLParity.Core.Sync;
 using Xunit;

@@ -69,7 +69,8 @@ public static class ScriptGenerator
 
         var newOrModifiedRoutines = changeList
             .Where(c => routineTypes.Contains(c.ObjectType)
-                && (c.Status == ChangeStatus.New || c.Status == ChangeStatus.Modified))
+                && (c.Status == ChangeStatus.New || c.Status == ChangeStatus.Modified)
+                && !c.IsPermissionOnlyChange)
             .ToList();
 
         var circularRoutines = DependencyOrderer.FindCircularDependencies(newOrModifiedRoutines);
@@ -180,7 +181,7 @@ public static class ScriptGenerator
 
                 sb.AppendLine($"-- Permissions for {change.ObjectType}: {change.Id}");
                 sb.AppendLine("GO");
-                sb.Append(permSql);
+                sb.AppendLine(permSql.TrimEnd());
                 sb.AppendLine("GO");
                 sb.AppendLine();
             }

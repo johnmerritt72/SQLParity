@@ -13,6 +13,7 @@ namespace SQLParity.Vsix.ViewModels
         private bool _includeSynonyms = true;
         private bool _includeUserDefinedDataTypes = true;
         private bool _includeUserDefinedTableTypes = true;
+        private bool _includePermissions = true;
 
         public bool IncludeSchemas
         {
@@ -68,6 +69,12 @@ namespace SQLParity.Vsix.ViewModels
             set => SetProperty(ref _includeUserDefinedTableTypes, value);
         }
 
+        public bool IncludePermissions
+        {
+            get => _includePermissions;
+            set => SetProperty(ref _includePermissions, value);
+        }
+
         public RelayCommand SelectAllCommand => new RelayCommand(_ => SetAll(true));
         public RelayCommand ClearAllCommand => new RelayCommand(_ => SetAll(false));
 
@@ -82,6 +89,7 @@ namespace SQLParity.Vsix.ViewModels
             IncludeSynonyms = value;
             IncludeUserDefinedDataTypes = value;
             IncludeUserDefinedTableTypes = value;
+            IncludePermissions = value;
         }
 
         public SQLParity.Core.SchemaReadOptions ToSchemaReadOptions()
@@ -97,6 +105,7 @@ namespace SQLParity.Vsix.ViewModels
                 IncludeSynonyms = IncludeSynonyms,
                 IncludeUserDefinedDataTypes = IncludeUserDefinedDataTypes,
                 IncludeUserDefinedTableTypes = IncludeUserDefinedTableTypes,
+                IncludePermissions = IncludePermissions,
             };
         }
     }

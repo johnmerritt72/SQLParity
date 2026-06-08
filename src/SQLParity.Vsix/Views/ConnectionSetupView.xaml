@@ -30,6 +30,21 @@
                     <CheckBox Content="Synonyms" IsChecked="{Binding ObjectTypeFilter.IncludeSynonyms}" Margin="8,2" />
                     <CheckBox Content="User-Defined Types" IsChecked="{Binding ObjectTypeFilter.IncludeUserDefinedDataTypes}" Margin="8,2" />
                     <CheckBox Content="User-Defined Table Types" IsChecked="{Binding ObjectTypeFilter.IncludeUserDefinedTableTypes}" Margin="8,2" />
+                    <CheckBox Content="Permissions"
+                              IsChecked="{Binding ObjectTypeFilter.IncludePermissions}"
+                              Margin="8,2"
+                              ToolTip="Permission comparison requires two live databases (not available in folder mode).">
+                        <CheckBox.Style>
+                            <Style TargetType="CheckBox">
+                                <Setter Property="IsEnabled" Value="True" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SideB.IsFolderMode}" Value="True">
+                                        <Setter Property="IsEnabled" Value="False" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </CheckBox.Style>
+                    </CheckBox>
                 </WrapPanel>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,6,0,0">
                     <Button Content="Select All" Command="{Binding ObjectTypeFilter.SelectAllCommand}" Padding="8,2" Margin="4,0" />

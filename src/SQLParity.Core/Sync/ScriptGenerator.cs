@@ -134,6 +134,15 @@ public static class ScriptGenerator
                 continue; // Already emitted above
             }
 
+            // Permission-only changes carry no object DDL to apply — their grants
+            // are emitted in the Permissions section below. Skip the DDL here.
+            if (change.IsPermissionOnlyChange)
+            {
+                completed++;
+                progress?.Report((completed, changeList.Count, change.Id.ToString()));
+                continue;
+            }
+
             sb.AppendLine($"-- [{change.Risk}] {change.Status} {change.ObjectType}: {change.Id}");
             sb.AppendLine("GO");
 
@@ -144,6 +153,37 @@ public static class ScriptGenerator
 
             completed++;
             progress?.Report((completed, changeList.Count, change.Id.ToString()));
+        }
+
+        // ============================================
+        // Permissions section — emitted after all objects exist so grants never
+        // reference a not-yet-created object. Each grantee is guarded; a missing
+        // destination principal hard-fails the script (THROW aborts the batch).
+        // ============================================
+        var permissionChangesPresent = changeList.Exists(c =>
+            c.PermissionChanges != null && c.PermissionChanges.Count > 0);
+
+        if (permissionChangesPresent)
+        {
+            sb.AppendLine("-- ============================================");
+            sb.AppendLine("-- Permissions");
+            sb.AppendLine("-- ============================================");
+            sb.AppendLine();
+
+            foreach (var change in changeList)
+            {
+                if (change.PermissionChanges == null || change.PermissionChanges.Count == 0)
+                    continue;
+
+                string permSql = PermissionScriptGenerator.Generate(change);
+                if (string.IsNullOrWhiteSpace(permSql)) continue;
+
+                sb.AppendLine($"-- Permissions for {change.ObjectType}: {change.Id}");
+                sb.AppendLine("GO");
+                sb.Append(permSql);
+                sb.AppendLine("GO");
+                sb.AppendLine();
+            }
         }
 
         sb.AppendLine("PRINT 'Script completed.'");

@@ -15,6 +15,12 @@ namespace SQLParity.Core
         public bool IncludeUserDefinedDataTypes { get; set; } = true;
         public bool IncludeUserDefinedTableTypes { get; set; } = true;
 
+        /// <summary>
+        /// Include object- and schema-level permission comparison. On by default.
+        /// Only effective in live-vs-live comparisons (folder mode skips it).
+        /// </summary>
+        public bool IncludePermissions { get; set; } = true;
+
         public static SchemaReadOptions All => new SchemaReadOptions();
     }
 }

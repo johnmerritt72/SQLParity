@@ -233,6 +233,12 @@ public sealed class SchemaReader
         foreach (var kvp in externalRefsRaw)
             externalRefs[kvp.Key] = kvp.Value;
 
+        // Read object- and schema-level permissions (live DB only). Gated by the
+        // option; the comparator additionally skips permissions for folder mode.
+        var permissions = options.IncludePermissions
+            ? PermissionReader.Read(_connectionString)
+            : (IReadOnlyList<PermissionModel>)Array.Empty<PermissionModel>();
+
         perfLog.Finish();
 
         serverConn.Disconnect();
@@ -252,6 +258,7 @@ public sealed class SchemaReader
             UserDefinedDataTypes = uddt,
             UserDefinedTableTypes = udtt,
             ExternalReferences = externalRefs,
+            Permissions = permissions,
         };
     }
 

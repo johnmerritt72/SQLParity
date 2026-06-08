@@ -24,6 +24,13 @@ public sealed class DatabaseSchema
     public required IReadOnlyList<UserDefinedTableTypeModel> UserDefinedTableTypes { get; init; }
 
     /// <summary>
+    /// Object- and schema-level permissions read from sys.database_permissions.
+    /// Empty when permissions were not read (folder side, or IncludePermissions off).
+    /// </summary>
+    public IReadOnlyList<PermissionModel> Permissions { get; init; }
+        = Array.Empty<PermissionModel>();
+
+    /// <summary>
     /// Map of (schema, object name) → list of external database / linked-server
     /// references for views, procs, functions, triggers. Objects with no external
     /// refs are absent. Sourced from sys.sql_expression_dependencies.

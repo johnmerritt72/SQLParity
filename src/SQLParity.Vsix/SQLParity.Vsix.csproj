@@ -221,4 +221,56 @@
       Value="$(SQLParityVersion)"
       Namespaces="&lt;Namespace Prefix='x' Uri='http://schemas.microsoft.com/developer/vsx-schema/2011' /&gt;" />
   </Target>
+  <!-- Inline task: read the Identity@Version baked into a built .vsix by opening
+       it as a zip and reading extension.vsixmanifest. Used by the guard below.
+       A custom task is used instead of the MSBuild Unzip task because the VSSDK
+       BuildTools register their own Unzip task (different parameters) that
+       shadows the built-in one. -->
+  <UsingTask TaskName="ReadVsixManifestVersion" TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <VsixPath ParameterType="System.String" Required="true" />
+      <Version ParameterType="System.String" Output="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.Text.RegularExpressions" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        Version = "";
+        using (var zip = System.IO.Compression.ZipFile.OpenRead(VsixPath))
+        {
+            var entry = zip.GetEntry("extension.vsixmanifest");
+            if (entry != null)
+            {
+                using (var sr = new StreamReader(entry.Open()))
+                {
+                    var text = sr.ReadToEnd();
+                    var m = Regex.Match(text, "<Identity[^>]*\\bVersion=\"([^\"]+)\"");
+                    if (m.Success) Version = m.Groups[1].Value;
+                }
+            }
+        }
+      ]]></Code>
+    </Task>
+  </UsingTask>
+  <!-- Guard against shipping a stale package version. The VSSDK packages the
+       manifest from an intermediate copy under obj\, and an INCREMENTAL build
+       can leave that copy one version behind even though version.txt and the
+       source manifest are current — producing a .vsix whose internal version
+       equals the already-installed one, so VSIXInstaller reports "already
+       installed to all applicable products". This target reads the version
+       actually baked into the produced .vsix and fails the build if it doesn't
+       match version.txt — forcing a clean Rebuild before the package ships.
+       (See the project memory 'project-vsix-version-source-of-truth'.) -->
+  <Target Name="VerifyPackagedVsixVersion"
+          AfterTargets="CreateVsixContainer"
+          Condition="'$(TargetVsixContainer)' != '' And Exists('$(TargetVsixContainer)')">
+    <ReadVsixManifestVersion VsixPath="$(TargetVsixContainer)">
+      <Output TaskParameter="Version" PropertyName="_PackagedVsixVersion" />
+    </ReadVsixManifestVersion>
+    <Error Condition="'$(_PackagedVsixVersion)' != '$(SQLParityVersion)'"
+           Text="Packaged VSIX version '$(_PackagedVsixVersion)' does not match version.txt '$(SQLParityVersion)'. The incremental build packaged a stale manifest. Run a clean rebuild (MSBuild /t:Rebuild) before installing." />
+    <Message Importance="high"
+             Text="VSIX version verified: packaged manifest is $(SQLParityVersion) (matches version.txt)." />
+  </Target>
 </Project>

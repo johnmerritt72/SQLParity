@@ -128,5 +128,11 @@ namespace SQLParity.Vsix.Options
         [Description("Arguments template. Tokens: {leftFile}, {rightFile}, {leftLabel}, {rightLabel}")]
         [DefaultValue("\"{leftFile}\" \"{rightFile}\" /dl \"{leftLabel}\" /dr \"{rightLabel}\" /e /u")]
         public string DiffToolArguments { get; set; } = "\"{leftFile}\" \"{rightFile}\" /dl \"{leftLabel}\" /dr \"{rightLabel}\" /e /u";
+
+        [Category("Script Output")]
+        [DisplayName("Open Script After Generate")]
+        [Description("When enabled, the generated .sql file is opened in SSMS's editor immediately after it's saved.")]
+        [DefaultValue(true)]
+        public bool OpenScriptAfterGenerate { get; set; } = true;
     }
 }

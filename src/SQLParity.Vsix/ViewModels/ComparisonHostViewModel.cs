@@ -545,6 +545,26 @@ namespace SQLParity.Vsix.ViewModels
                 await Task.Run(() => File.WriteAllText(savePath, script.SqlText));
                 ProgressText = string.Empty;
 
+                // Auto-open the saved script in SSMS's editor, controlled by
+                // the "Open Script After Generate" option (default on). The
+                // open happens on the UI thread (we're back here after the
+                // awaited Task.Run). Open failures must not bury the save
+                // success — the file is on disk regardless — so swallow.
+                try
+                {
+                    var opts = SQLParity.Vsix.Options.OptionsHelper.GetOptions();
+                    if (opts != null && opts.OpenScriptAfterGenerate)
+                    {
+                        Microsoft.VisualStudio.Shell.VsShellUtilities.OpenDocument(
+                            SQLParityPackage.Instance, savePath);
+                    }
+                }
+                catch (Exception openEx)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        "SQLParity: failed to auto-open generated script — " + openEx.Message);
+                }
+
                 MessageBox.Show(
                     string.Format("Script saved to {0}\n{1} changes, {2} destructive.",
                         savePath, script.TotalChanges, script.DestructiveChanges),

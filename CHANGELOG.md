@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.4.4] — 2026-06-16
+
+### Added
+- **Auto-open generated script in SSMS.** After Generate Script writes the .sql file, SQLParity now opens it as a new SQL query tab in the active SSMS window. Controlled by a new **Tools → Options → SQLParity → General → Script Output → Open Script After Generate** toggle (default **on**); disable it to keep the previous behavior (file saved, no tab opened). The existing "Script saved to *path*" summary dialog still fires with the change/destructive counts either way, and open failures fall through silently so they can't bury the save success.
+
 ## [1.4.1] — 2026-06-08
 
 ### Added

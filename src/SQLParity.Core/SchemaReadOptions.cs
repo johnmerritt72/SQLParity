@@ -36,7 +36,7 @@ namespace SQLParity.Core
         public bool IncludesSchema(string schemaName)
         {
             return string.IsNullOrWhiteSpace(SchemaFilter)
-                || string.Equals(SchemaFilter.Trim(), schemaName, StringComparison.OrdinalIgnoreCase);
+                || string.Equals(SchemaFilter!.Trim(), schemaName, StringComparison.OrdinalIgnoreCase);
         }
 
         public static SchemaReadOptions All => new SchemaReadOptions();

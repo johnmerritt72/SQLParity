@@ -13,7 +13,7 @@ public static class SchemaCacheKey
     {
         var key = (server ?? "").Trim() + "|" + (database ?? "").Trim();
         if (!string.IsNullOrWhiteSpace(schemaFilter))
-            key += "|" + schemaFilter.Trim();
+            key += "|" + schemaFilter!.Trim();
         return key;
     }
 }

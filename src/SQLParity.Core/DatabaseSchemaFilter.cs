@@ -19,7 +19,7 @@ public static class DatabaseSchemaFilter
         if (string.IsNullOrWhiteSpace(schemaName))
             return source;
 
-        var name = schemaName.Trim();
+        var name = schemaName!.Trim();
         bool Matches(string s) => string.Equals(s, name, StringComparison.OrdinalIgnoreCase);
 
         var externalRefs = new Dictionary<(string Schema, string Name), IReadOnlyList<string>>();
@@ -57,7 +57,7 @@ public static class DatabaseSchemaFilter
         if (permissions == null || permissions.Count == 0 || string.IsNullOrWhiteSpace(schemaName))
             return permissions ?? Array.Empty<PermissionModel>();
 
-        var name = schemaName.Trim();
+        var name = schemaName!.Trim();
         return permissions
             .Where(p => string.Equals(p.TargetSchema, name, StringComparison.OrdinalIgnoreCase))
             .ToList();

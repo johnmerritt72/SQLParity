@@ -53,7 +53,7 @@ public class SchemaFilterReadTests : IClassFixture<SchemaFilterReadFixture>
 
     public SchemaFilterReadTests(SchemaFilterReadFixture fx) => _fx = fx;
 
-    private DatabaseSchema Read(string schemaFilter) =>
+    private DatabaseSchema Read(string? schemaFilter) =>
         new SchemaReader(_fx.ConnectionString, _fx.DatabaseName)
             .ReadSchema(null, new SchemaReadOptions { SchemaFilter = schemaFilter });
 

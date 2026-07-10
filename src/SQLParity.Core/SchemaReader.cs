@@ -125,24 +125,37 @@ public sealed class SchemaReader
 
         // Quick count pass (metadata already pre-loaded, no scripting)
         int totalObjects = 0;
+        bool hasSchemaFilter = !string.IsNullOrWhiteSpace(options.SchemaFilter);
         if (options.IncludeSchemas)
-            foreach (Schema s in db.Schemas) if (!s.IsSystemObject) totalObjects++;
+            foreach (Schema s in db.Schemas) if (!s.IsSystemObject && options.IncludesSchema(s.Name)) totalObjects++;
         if (options.IncludeTables)
-            foreach (Table t in db.Tables) if (!t.IsSystemObject) totalObjects++;
+            foreach (Table t in db.Tables) if (!t.IsSystemObject && options.IncludesSchema(t.Schema)) totalObjects++;
         if (options.IncludeViews)
-            foreach (View v in db.Views) if (!v.IsSystemObject) totalObjects++;
+            foreach (View v in db.Views) if (!v.IsSystemObject && options.IncludesSchema(v.Schema)) totalObjects++;
         if (options.IncludeStoredProcedures)
-            foreach (StoredProcedure sp in db.StoredProcedures) if (!sp.IsSystemObject) totalObjects++;
+            foreach (StoredProcedure sp in db.StoredProcedures) if (!sp.IsSystemObject && options.IncludesSchema(sp.Schema)) totalObjects++;
         if (options.IncludeFunctions)
-            foreach (UserDefinedFunction f in db.UserDefinedFunctions) if (!f.IsSystemObject) totalObjects++;
+            foreach (UserDefinedFunction f in db.UserDefinedFunctions) if (!f.IsSystemObject && options.IncludesSchema(f.Schema)) totalObjects++;
         if (options.IncludeSequences)
-            totalObjects += db.Sequences.Count;
+        {
+            if (!hasSchemaFilter) totalObjects += db.Sequences.Count;
+            else foreach (Sequence sq in db.Sequences) if (options.IncludesSchema(sq.Schema)) totalObjects++;
+        }
         if (options.IncludeSynonyms)
-            totalObjects += db.Synonyms.Count;
+        {
+            if (!hasSchemaFilter) totalObjects += db.Synonyms.Count;
+            else foreach (Synonym sy in db.Synonyms) if (options.IncludesSchema(sy.Schema)) totalObjects++;
+        }
         if (options.IncludeUserDefinedDataTypes)
-            totalObjects += db.UserDefinedDataTypes.Count;
+        {
+            if (!hasSchemaFilter) totalObjects += db.UserDefinedDataTypes.Count;
+            else foreach (UserDefinedDataType ud in db.UserDefinedDataTypes) if (options.IncludesSchema(ud.Schema)) totalObjects++;
+        }
         if (options.IncludeUserDefinedTableTypes)
-            totalObjects += db.UserDefinedTableTypes.Count;
+        {
+            if (!hasSchemaFilter) totalObjects += db.UserDefinedTableTypes.Count;
+            else foreach (UserDefinedTableType ut in db.UserDefinedTableTypes) if (options.IncludesSchema(ut.Schema)) totalObjects++;
+        }
 
         int completed = 0;
         var perfLog = new SchemaReadPerformanceLog(_databaseName);
@@ -154,7 +167,7 @@ public sealed class SchemaReader
 
         var sw = Stopwatch.StartNew();
         var schemas = options.IncludeSchemas
-            ? ReadSchemas(db, opts, ref completed, totalObjects, progress)
+            ? ReadSchemas(db, opts, options, ref completed, totalObjects, progress)
             : new List<SchemaModel>();
         sw.Stop();
         perfLog.LogSection("Schemas", schemas.Count, sw.Elapsed);
@@ -162,7 +175,7 @@ public sealed class SchemaReader
 
         sw.Restart();
         var tables = options.IncludeTables
-            ? BulkTableMetadataReader.ReadAllTables(_connectionString, _databaseName, progress, ref completed, totalObjects, ct)
+            ? BulkTableMetadataReader.ReadAllTables(_connectionString, _databaseName, progress, ref completed, totalObjects, ct, options)
             : new List<TableModel>();
         sw.Stop();
         perfLog.LogSection("Tables", tables.Count, sw.Elapsed);
@@ -170,7 +183,7 @@ public sealed class SchemaReader
 
         sw.Restart();
         var views = options.IncludeViews
-            ? ReadViews(db, opts, ref completed, totalObjects, progress, ct)
+            ? ReadViews(db, opts, options, ref completed, totalObjects, progress, ct)
             : new List<ViewModel>();
         sw.Stop();
         perfLog.LogSection("Views", views.Count, sw.Elapsed);
@@ -178,7 +191,7 @@ public sealed class SchemaReader
 
         sw.Restart();
         var procs = options.IncludeStoredProcedures
-            ? ReadStoredProcedures(db, opts, ref completed, totalObjects, progress, ct)
+            ? ReadStoredProcedures(db, opts, options, ref completed, totalObjects, progress, ct)
             : new List<StoredProcedureModel>();
         sw.Stop();
         perfLog.LogSection("StoredProcedures", procs.Count, sw.Elapsed);
@@ -186,7 +199,7 @@ public sealed class SchemaReader
 
         sw.Restart();
         var functions = options.IncludeFunctions
-            ? ReadFunctions(db, opts, ref completed, totalObjects, progress, ct)
+            ? ReadFunctions(db, opts, options, ref completed, totalObjects, progress, ct)
             : new List<UserDefinedFunctionModel>();
         sw.Stop();
         perfLog.LogSection("Functions", functions.Count, sw.Elapsed);
@@ -194,28 +207,28 @@ public sealed class SchemaReader
 
         sw.Restart();
         var sequences = options.IncludeSequences
-            ? ReadSequences(db, opts, ref completed, totalObjects, progress)
+            ? ReadSequences(db, opts, options, ref completed, totalObjects, progress)
             : new List<SequenceModel>();
         sw.Stop();
         perfLog.LogSection("Sequences", sequences.Count, sw.Elapsed);
 
         sw.Restart();
         var synonyms = options.IncludeSynonyms
-            ? ReadSynonyms(db, opts, ref completed, totalObjects, progress)
+            ? ReadSynonyms(db, opts, options, ref completed, totalObjects, progress)
             : new List<SynonymModel>();
         sw.Stop();
         perfLog.LogSection("Synonyms", synonyms.Count, sw.Elapsed);
 
         sw.Restart();
         var uddt = options.IncludeUserDefinedDataTypes
-            ? ReadUserDefinedDataTypes(db, opts, ref completed, totalObjects, progress)
+            ? ReadUserDefinedDataTypes(db, opts, options, ref completed, totalObjects, progress)
             : new List<UserDefinedDataTypeModel>();
         sw.Stop();
         perfLog.LogSection("UserDefinedDataTypes", uddt.Count, sw.Elapsed);
 
         sw.Restart();
         var udtt = options.IncludeUserDefinedTableTypes
-            ? ReadUserDefinedTableTypes(db, opts, ref completed, totalObjects, progress)
+            ? ReadUserDefinedTableTypes(db, opts, options, ref completed, totalObjects, progress)
             : new List<UserDefinedTableTypeModel>();
         sw.Stop();
         perfLog.LogSection("UserDefinedTableTypes", udtt.Count, sw.Elapsed);
@@ -243,7 +256,7 @@ public sealed class SchemaReader
 
         serverConn.Disconnect();
 
-        return new DatabaseSchema
+        var result = new DatabaseSchema
         {
             ServerName = builder.DataSource,
             DatabaseName = _databaseName,
@@ -260,6 +273,14 @@ public sealed class SchemaReader
             ExternalReferences = externalRefs,
             Permissions = permissions,
         };
+
+        // Final consistency pass: the per-loop skips above are the speedup;
+        // this guarantees permissions and external references (read in bulk,
+        // unaware of the filter) are scoped too.
+        if (!string.IsNullOrWhiteSpace(options.SchemaFilter))
+            result = DatabaseSchemaFilter.FilterToSchema(result, options.SchemaFilter);
+
+        return result;
     }
 
     private static void SetDefaultInitFields(Server server, SchemaReadOptions options)
@@ -298,13 +319,16 @@ public sealed class SchemaReader
             server.SetDefaultInitFields(typeof(UserDefinedTableType), true);
     }
 
-    private static List<SchemaModel> ReadSchemas(Database db, ScriptingOptions opts, ref int completed, int total, IProgress<SchemaReadProgress>? progress)
+    private static List<SchemaModel> ReadSchemas(Database db, ScriptingOptions opts, SchemaReadOptions options, ref int completed, int total, IProgress<SchemaReadProgress>? progress)
     {
         var result = new List<SchemaModel>();
 
         foreach (Schema s in db.Schemas)
         {
             if (s.IsSystemObject)
+                continue;
+
+            if (!options.IncludesSchema(s.Name))
                 continue;
 
             completed++;
@@ -511,7 +535,7 @@ public sealed class SchemaReader
         return result;
     }
 
-    private static List<ViewModel> ReadViews(Database db, ScriptingOptions opts, ref int completed, int total, IProgress<SchemaReadProgress>? progress, System.Threading.CancellationToken ct = default)
+    private static List<ViewModel> ReadViews(Database db, ScriptingOptions opts, SchemaReadOptions options, ref int completed, int total, IProgress<SchemaReadProgress>? progress, System.Threading.CancellationToken ct = default)
     {
         var result = new List<ViewModel>();
 
@@ -520,6 +544,9 @@ public sealed class SchemaReader
             ct.ThrowIfCancellationRequested();
 
             if (v.IsSystemObject)
+                continue;
+
+            if (!options.IncludesSchema(v.Schema))
                 continue;
 
             completed++;
@@ -557,7 +584,7 @@ public sealed class SchemaReader
         return result;
     }
 
-    private static List<StoredProcedureModel> ReadStoredProcedures(Database db, ScriptingOptions opts, ref int completed, int total, IProgress<SchemaReadProgress>? progress, System.Threading.CancellationToken ct = default)
+    private static List<StoredProcedureModel> ReadStoredProcedures(Database db, ScriptingOptions opts, SchemaReadOptions options, ref int completed, int total, IProgress<SchemaReadProgress>? progress, System.Threading.CancellationToken ct = default)
     {
         var result = new List<StoredProcedureModel>();
 
@@ -566,6 +593,9 @@ public sealed class SchemaReader
             ct.ThrowIfCancellationRequested();
 
             if (sp.IsSystemObject)
+                continue;
+
+            if (!options.IncludesSchema(sp.Schema))
                 continue;
 
             completed++;
@@ -601,7 +631,7 @@ public sealed class SchemaReader
         return result;
     }
 
-    private static List<UserDefinedFunctionModel> ReadFunctions(Database db, ScriptingOptions opts, ref int completed, int total, IProgress<SchemaReadProgress>? progress, System.Threading.CancellationToken ct = default)
+    private static List<UserDefinedFunctionModel> ReadFunctions(Database db, ScriptingOptions opts, SchemaReadOptions options, ref int completed, int total, IProgress<SchemaReadProgress>? progress, System.Threading.CancellationToken ct = default)
     {
         var result = new List<UserDefinedFunctionModel>();
 
@@ -610,6 +640,9 @@ public sealed class SchemaReader
             ct.ThrowIfCancellationRequested();
 
             if (udf.IsSystemObject)
+                continue;
+
+            if (!options.IncludesSchema(udf.Schema))
                 continue;
 
             completed++;
@@ -654,12 +687,15 @@ public sealed class SchemaReader
         return result;
     }
 
-    private static List<SequenceModel> ReadSequences(Database db, ScriptingOptions opts, ref int completed, int total, IProgress<SchemaReadProgress>? progress)
+    private static List<SequenceModel> ReadSequences(Database db, ScriptingOptions opts, SchemaReadOptions options, ref int completed, int total, IProgress<SchemaReadProgress>? progress)
     {
         var result = new List<SequenceModel>();
 
         foreach (Sequence seq in db.Sequences)
         {
+            if (!options.IncludesSchema(seq.Schema))
+                continue;
+
             completed++;
             progress?.Report(new SchemaReadProgress
             {
@@ -691,12 +727,15 @@ public sealed class SchemaReader
         return result;
     }
 
-    private static List<SynonymModel> ReadSynonyms(Database db, ScriptingOptions opts, ref int completed, int total, IProgress<SchemaReadProgress>? progress)
+    private static List<SynonymModel> ReadSynonyms(Database db, ScriptingOptions opts, SchemaReadOptions options, ref int completed, int total, IProgress<SchemaReadProgress>? progress)
     {
         var result = new List<SynonymModel>();
 
         foreach (Synonym syn in db.Synonyms)
         {
+            if (!options.IncludesSchema(syn.Schema))
+                continue;
+
             completed++;
             progress?.Report(new SchemaReadProgress
             {
@@ -728,12 +767,15 @@ public sealed class SchemaReader
         return result;
     }
 
-    private static List<UserDefinedDataTypeModel> ReadUserDefinedDataTypes(Database db, ScriptingOptions opts, ref int completed, int total, IProgress<SchemaReadProgress>? progress)
+    private static List<UserDefinedDataTypeModel> ReadUserDefinedDataTypes(Database db, ScriptingOptions opts, SchemaReadOptions options, ref int completed, int total, IProgress<SchemaReadProgress>? progress)
     {
         var result = new List<UserDefinedDataTypeModel>();
 
         foreach (UserDefinedDataType uddt in db.UserDefinedDataTypes)
         {
+            if (!options.IncludesSchema(uddt.Schema))
+                continue;
+
             completed++;
             progress?.Report(new SchemaReadProgress
             {
@@ -767,12 +809,15 @@ public sealed class SchemaReader
         return result;
     }
 
-    private static List<UserDefinedTableTypeModel> ReadUserDefinedTableTypes(Database db, ScriptingOptions opts, ref int completed, int total, IProgress<SchemaReadProgress>? progress)
+    private static List<UserDefinedTableTypeModel> ReadUserDefinedTableTypes(Database db, ScriptingOptions opts, SchemaReadOptions options, ref int completed, int total, IProgress<SchemaReadProgress>? progress)
     {
         var result = new List<UserDefinedTableTypeModel>();
 
         foreach (UserDefinedTableType udtt in db.UserDefinedTableTypes)
         {
+            if (!options.IncludesSchema(udtt.Schema))
+                continue;
+
             completed++;
             progress?.Report(new SchemaReadProgress
             {

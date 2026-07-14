@@ -46,6 +46,13 @@
                         </CheckBox.Style>
                     </CheckBox>
                 </WrapPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,8,0,0">
+                    <TextBlock Text="Schema:" VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <ComboBox MinWidth="180"
+                              ItemsSource="{Binding AvailableSchemas}"
+                              SelectedItem="{Binding SelectedSchema}"
+                              ToolTip="Limit the comparison to a single schema (faster on large databases). The list comes from Side A; the same schema applies to both sides." />
+                </StackPanel>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,6,0,0">
                     <Button Content="Select All" Command="{Binding ObjectTypeFilter.SelectAllCommand}" Padding="8,2" Margin="4,0" />
                     <Button Content="Clear All" Command="{Binding ObjectTypeFilter.ClearAllCommand}" Padding="8,2" Margin="4,0" />

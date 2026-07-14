@@ -8,8 +8,9 @@ namespace SQLParity.Core.Sync;
 /// <summary>
 /// Renders GRANT/DENY/REVOKE statements for a Change's permission sub-changes.
 /// The parent Change's ObjectType decides OBJECT:: vs SCHEMA:: scope. Each
-/// distinct grantee is preceded by an existence guard that hard-fails (THROW)
-/// if the principal is missing on the destination.
+/// distinct grantee's statements are wrapped in an IF EXISTS / ELSE PRINT
+/// guard so a principal missing on the destination is skipped (with a PRINT
+/// breadcrumb) rather than aborting the rest of the script.
 /// </summary>
 public static class PermissionScriptGenerator
 {
@@ -46,13 +47,15 @@ public static class PermissionScriptGenerator
             string granteeLiteral = grantee.Replace("'", "''");
 
             sb.AppendLine(
-                $"IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'{granteeLiteral}')");
-            sb.AppendLine(
-                $"    THROW 50000, 'Principal [{granteeLiteral}] does not exist on destination — cannot apply its permissions.', 1;");
-
+                $"IF EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'{granteeLiteral}')");
+            sb.AppendLine("BEGIN");
             foreach (var pc in granteeChanges.OrderBy(p => p.PermissionName, System.StringComparer.OrdinalIgnoreCase))
                 foreach (var stmt in StatementsFor(pc, scope, grantee))
-                    sb.AppendLine(stmt);
+                    sb.AppendLine("    " + stmt);
+            sb.AppendLine("END");
+            sb.AppendLine("ELSE");
+            sb.AppendLine(
+                $"    PRINT 'Skipped permissions for [{granteeLiteral}]: principal does not exist on destination.';");
         }
 
         return sb.ToString();

@@ -11,6 +11,13 @@ public sealed class ApplyStepResult
     public required bool Succeeded { get; init; }
     public required string? ErrorMessage { get; init; }
     public required TimeSpan Duration { get; init; }
+
+    /// <summary>
+    /// Server-side info messages emitted during this step (PRINT, RAISERROR
+    /// at severity ≤ 10). Empty when the step produced none. Surfaces things
+    /// like "Skipped permissions for [X]" from the permission script's guard.
+    /// </summary>
+    public IReadOnlyList<string> InfoMessages { get; init; } = Array.Empty<string>();
 }
 
 public sealed class ApplyResult

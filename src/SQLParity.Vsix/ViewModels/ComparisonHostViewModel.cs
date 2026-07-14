@@ -400,28 +400,17 @@ namespace SQLParity.Vsix.ViewModels
 
             try
             {
-                // Use lightweight COUNT queries instead of a full schema re-read
+                // Use lightweight COUNT queries instead of a full schema re-read.
+                // DestinationCountQuery applies the same per-type IsSystemObject
+                // filter SMO uses so the verify count matches what SchemaReader
+                // recorded into the comparison snapshot. Without it, destinations
+                // with SSMS database-diagram support installed report phantom
+                // drift on every Generate-Script / Apply-Live click because the
+                // diagram-marker extended property excludes objects from SMO but
+                // not from a raw sys.* COUNT.
                 var connStr = destination.BuildConnectionString();
                 var counts = await Task.Run(() =>
-                {
-                    using (var conn = new System.Data.SqlClient.SqlConnection(connStr))
-                    {
-                        conn.Open();
-                        using (var cmd = conn.CreateCommand())
-                        {
-                            cmd.CommandText =
-                                "SELECT " +
-                                "(SELECT COUNT(*) FROM sys.tables WHERE is_ms_shipped = 0), " +
-                                "(SELECT COUNT(*) FROM sys.views WHERE is_ms_shipped = 0), " +
-                                "(SELECT COUNT(*) FROM sys.procedures WHERE is_ms_shipped = 0)";
-                            using (var reader = cmd.ExecuteReader())
-                            {
-                                reader.Read();
-                                return (tables: reader.GetInt32(0), views: reader.GetInt32(1), procs: reader.GetInt32(2));
-                            }
-                        }
-                    }
-                });
+                    SQLParity.Core.Sync.DestinationCountQuery.Read(connStr));
 
                 ProgressText = string.Empty;
 
@@ -718,10 +707,11 @@ namespace SQLParity.Vsix.ViewModels
 
                 ProgressText = string.Empty;
 
+                string infoSection = FormatInfoMessages(result);
                 if (result.FullySucceeded)
                 {
                     MessageBox.Show(
-                        string.Format("All {0} changes applied successfully.", result.SucceededCount),
+                        string.Format("All {0} changes applied successfully.", result.SucceededCount) + infoSection,
                         "SQLParity",
                         MessageBoxButton.OK,
                         MessageBoxImage.Information);
@@ -732,7 +722,8 @@ namespace SQLParity.Vsix.ViewModels
                         string.Format("Apply stopped on error. {0} succeeded, {1} failed.\n\nFirst error: {2}",
                             result.SucceededCount,
                             result.FailedCount,
-                            result.Steps.FirstOrDefault(s => !s.Succeeded)?.ErrorMessage ?? "Unknown"),
+                            result.Steps.FirstOrDefault(s => !s.Succeeded)?.ErrorMessage ?? "Unknown")
+                            + infoSection,
                         "SQLParity",
                         MessageBoxButton.OK,
                         MessageBoxImage.Error);
@@ -863,6 +854,22 @@ namespace SQLParity.Vsix.ViewModels
                 MessageBox.Show(owner, text, "SQLParity", MessageBoxButton.OK, image);
             else
                 MessageBox.Show(text, "SQLParity", MessageBoxButton.OK, image);
+        }
+
+        /// <summary>
+        /// Renders server-side PRINT / low-severity RAISERROR messages captured
+        /// during an apply (e.g. "Skipped permissions for [X]" from a missing
+        /// principal). Empty when no step emitted any. Returned with a leading
+        /// blank line so callers can append directly to a summary.
+        /// </summary>
+        private static string FormatInfoMessages(SQLParity.Core.Sync.ApplyResult result)
+        {
+            var lines = new List<string>();
+            foreach (var step in result.Steps)
+                foreach (var msg in step.InfoMessages)
+                    lines.Add("  • " + step.ObjectName + ": " + msg);
+            if (lines.Count == 0) return string.Empty;
+            return "\n\nServer messages:\n" + string.Join("\n", lines);
         }
 
         /// <summary>
@@ -1013,6 +1020,7 @@ namespace SQLParity.Vsix.ViewModels
             int totalFailed = 0;
             int totalAttempted = 0;
             string firstError = null;
+            var infoLines = new List<string>();
 
             int dbIndex = 0;
             foreach (var group in byDb)
@@ -1061,6 +1069,9 @@ namespace SQLParity.Vsix.ViewModels
                         var step = groupResult.Steps.FirstOrDefault(s => !s.Succeeded);
                         firstError = $"[{dbName}] {step?.ErrorMessage ?? "Unknown"}";
                     }
+                    foreach (var s in groupResult.Steps)
+                        foreach (var msg in s.InfoMessages)
+                            infoLines.Add($"  • [{dbName}] {s.ObjectName}: {msg}");
                 }
                 catch (Exception ex)
                 {
@@ -1076,6 +1087,8 @@ namespace SQLParity.Vsix.ViewModels
                 : $"Apply finished with errors. {totalSucceeded} succeeded, {totalFailed} failed across {byDb.Count} database(s).";
             if (firstError != null)
                 summary += "\n\nFirst error: " + firstError;
+            if (infoLines.Count > 0)
+                summary += "\n\nServer messages:\n" + string.Join("\n", infoLines);
 
             ShowResultDialog(summary,
                 totalFailed > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);

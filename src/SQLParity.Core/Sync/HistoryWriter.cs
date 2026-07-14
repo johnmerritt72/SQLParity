@@ -48,6 +48,8 @@ public sealed class HistoryWriter
             sb.AppendLine($"[{status}] {step.ObjectName} ({step.Duration.TotalMilliseconds:F0}ms)");
             if (!step.Succeeded && step.ErrorMessage is not null)
                 sb.AppendLine($"  Error: {step.ErrorMessage}");
+            foreach (var info in step.InfoMessages)
+                sb.AppendLine($"  Info:  {info}");
             sb.AppendLine($"  SQL: {step.Sql}");
             sb.AppendLine();
         }

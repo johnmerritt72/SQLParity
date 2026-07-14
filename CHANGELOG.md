@@ -5,6 +5,20 @@
 ### Added
 - **Auto-open generated script in SSMS.** After Generate Script writes the .sql file, SQLParity now opens it as a new SQL query tab in the active SSMS window. Controlled by a new **Tools → Options → SQLParity → General → Script Output → Open Script After Generate** toggle (default **on**); disable it to keep the previous behavior (file saved, no tab opened). The existing "Script saved to *path*" summary dialog still fires with the change/destructive counts either way, and open failures fall through silently so they can't bury the save success.
 
+## [1.4.3] — 2026-06-15
+
+### Fixed
+- **Phantom "destination has changed" prompt on every Generate-Script / Apply-Live click.** The pre-Apply verify ran `SELECT COUNT(*) FROM sys.{tables,views,procedures} WHERE is_ms_shipped = 0` and compared the result to the count `SchemaReader` had snapshotted at comparison time. SMO's `IsSystemObject` filter is per-type and stricter than `is_ms_shipped` alone: for views and procedures it also excludes objects carrying the `microsoft_database_tools_support` extended property (which SSMS attaches when you install database-diagram support — `sysdiagrams` plus `sp_creatediagram` / `sp_helpdiagrams` / `fn_diagramobjects` / …). In any destination where diagrams have been installed, the raw COUNT was N higher than the snapshot, the dialog fired every time, and the proc count was the loudest signal. Verify now uses a query whose per-type filter matches SMO exactly.
+
+## [1.4.2] — 2026-06-15
+
+### Fixed
+- **Apply Live silently skipped all permission changes.** The 1.4.1 Apply Live path ran each change's DDL but never invoked the permission-script generator, so every GRANT / REVOKE / DENY was dropped. Apply Live reported "all changes applied successfully" while `sys.database_permissions` on the destination was unchanged — and a refreshed comparison kept showing the same permission diff. Apply Live now runs a Permissions pass after the DDL pass, mirroring the script-file generator's structure, within the same transaction as the DDL.
+- **A missing principal aborted the entire permission script.** The per-grantee existence guard previously emitted `IF NOT EXISTS (…) THROW`, so the first missing principal stopped the batch and skipped every subsequent grantee's grants. The guard now uses `IF EXISTS (…) BEGIN <grants> END ELSE PRINT 'Skipped permissions for [X]…';` — a missing principal is skipped (with a breadcrumb on the Messages tab) and the rest of the script runs.
+
+### Added
+- **Apply Live surfaces server-side info messages.** PRINT and low-severity RAISERROR messages emitted during each step (e.g. the "Skipped permissions for [X]…" notice from a missing principal) are now captured per step into `ApplyStepResult.InfoMessages`, shown in a **Server messages** section in the Apply Live result dialog, and written into the apply-history file — so a silently-skipped grantee can't go unnoticed.
+
 ## [1.4.1] — 2026-06-08
 
 ### Added

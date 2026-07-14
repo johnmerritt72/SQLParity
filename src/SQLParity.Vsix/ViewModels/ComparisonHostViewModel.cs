@@ -55,6 +55,16 @@ namespace SQLParity.Vsix.ViewModels
         /// </summary>
         private Dictionary<string, FolderSchemaContext> _sideBFolderContextsByDb;
 
+        /// <summary>
+        /// The schema filter (if any) that was active when the current
+        /// comparison result was produced. Captured at compare time so the
+        /// pre-Apply drift check (<see cref="CheckDestinationUnchangedAsync"/>)
+        /// scopes its live counts the same way the snapshot was scoped — the
+        /// dropdown on <see cref="SetupViewModel"/> may have changed since
+        /// the compare ran, so that live value must never be read at apply time.
+        /// </summary>
+        private string _comparisonSchemaFilter;
+
         public ComparisonHostViewModel()
         {
             SetupViewModel = new ConnectionSetupViewModel();
@@ -279,6 +289,7 @@ namespace SQLParity.Vsix.ViewModels
                     // and read per-DB as needed. This avoids a wasted read of
                     // a DB that no file actually targets.
                     schemaA = null;
+                    _comparisonSchemaFilter = schemaFilter;
                     result = await BuildMultiDbFolderResultAsync(
                         sideA, sideB, readOptions,
                         ignoreCommentsInSps, ignoreWhitespaceInSps, ignoreOptionalBrackets,
@@ -287,6 +298,7 @@ namespace SQLParity.Vsix.ViewModels
                 else
                 {
                     _sideBFolderContextsByDb = null;
+                    _comparisonSchemaFilter = schemaFilter;
                     var cachedFullB = SchemaCache.Get(sideB.ServerName, sideB.DatabaseName, cacheTtl);
                     var cachedScopedB = schemaFilter == null
                         ? null
@@ -432,28 +444,23 @@ namespace SQLParity.Vsix.ViewModels
 
             try
             {
-                // Use lightweight COUNT queries instead of a full schema re-read
+                // Use lightweight COUNT queries instead of a full schema re-read.
+                // DestinationCountQuery applies the same per-type IsSystemObject
+                // filter SMO uses so the verify count matches what SchemaReader
+                // recorded into the comparison snapshot. Without it, destinations
+                // with SSMS database-diagram support installed report phantom
+                // drift on every Generate-Script / Apply-Live click because the
+                // diagram-marker extended property excludes objects from SMO but
+                // not from a raw sys.* COUNT.
+                //
+                // _comparisonSchemaFilter (captured at compare time, not read
+                // from SetupViewModel here) scopes the count to the schema the
+                // snapshot was actually limited to — otherwise a filtered
+                // compare always sees "extra" objects belonging to schemas
+                // outside the filter and reports false drift.
                 var connStr = destination.BuildConnectionString();
                 var counts = await Task.Run(() =>
-                {
-                    using (var conn = new System.Data.SqlClient.SqlConnection(connStr))
-                    {
-                        conn.Open();
-                        using (var cmd = conn.CreateCommand())
-                        {
-                            cmd.CommandText =
-                                "SELECT " +
-                                "(SELECT COUNT(*) FROM sys.tables WHERE is_ms_shipped = 0), " +
-                                "(SELECT COUNT(*) FROM sys.views WHERE is_ms_shipped = 0), " +
-                                "(SELECT COUNT(*) FROM sys.procedures WHERE is_ms_shipped = 0)";
-                            using (var reader = cmd.ExecuteReader())
-                            {
-                                reader.Read();
-                                return (tables: reader.GetInt32(0), views: reader.GetInt32(1), procs: reader.GetInt32(2));
-                            }
-                        }
-                    }
-                });
+                    DestinationCountQuery.Read(connStr, _comparisonSchemaFilter));
 
                 ProgressText = string.Empty;
 

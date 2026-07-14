@@ -17,7 +17,7 @@ internal static class BulkTableMetadataReader
 {
     public static List<TableModel> ReadAllTables(string connectionString, string databaseName,
         IProgress<SchemaReadProgress>? progress, ref int completed, int totalObjects,
-        CancellationToken ct)
+        CancellationToken ct, SchemaReadOptions? options = null)
     {
         var csb = new SqlConnectionStringBuilder(connectionString)
         {
@@ -58,6 +58,9 @@ internal static class BulkTableMetadataReader
         foreach (var (schema, name) in tableKeys)
         {
             ct.ThrowIfCancellationRequested();
+
+            if (options != null && !options.IncludesSchema(schema))
+                continue;
 
             completed++;
             progress?.Report(new SchemaReadProgress

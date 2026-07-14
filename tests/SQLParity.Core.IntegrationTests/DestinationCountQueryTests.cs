@@ -9,13 +9,22 @@ namespace SQLParity.Core.IntegrationTests;
 public sealed class DestinationCountQueryFixture : ThrowawayDatabaseFixture
 {
     protected override string SetupSql() => @"
+CREATE SCHEMA [sales] AUTHORIZATION [dbo]
+GO
+
 CREATE TABLE [dbo].[RegularTable] ([Id] INT NOT NULL PRIMARY KEY)
+GO
+CREATE TABLE [sales].[SalesTable] ([Id] INT NOT NULL PRIMARY KEY)
 GO
 
 CREATE VIEW [dbo].[RegularView] AS SELECT 1 AS X
 GO
+CREATE VIEW [sales].[SalesView] AS SELECT 1 AS X
+GO
 
 CREATE PROCEDURE [dbo].[GetFoo] AS BEGIN SELECT 1; END
+GO
+CREATE PROCEDURE [sales].[SalesProc] AS BEGIN SELECT 1; END
 GO
 
 CREATE PROCEDURE [dbo].[sp_GetFoo] AS BEGIN SELECT 1; END
@@ -85,5 +94,73 @@ public class DestinationCountQueryTests : IClassFixture<DestinationCountQueryFix
         Assert.Equal(schema.Tables.Count, counts.tables);
         Assert.Equal(schema.Views.Count, counts.views);
         Assert.Equal(schema.StoredProcedures.Count, counts.procs);
+    }
+
+    [Fact]
+    public void DestinationCountQuery_UnscopedCall_CountsAllSchemas()
+    {
+        // Baseline: no schemaFilter argument still counts objects across
+        // every schema (dbo AND sales), unchanged by adding the optional
+        // parameter.
+        var counts = DestinationCountQuery.Read(_fx.ConnectionString);
+
+        // Tables are not excluded by the tools-support filter (only views and
+        // procs are, per the SMO IsSystemObject behavior documented on
+        // DestinationCountQuery), so DiagramLikeTable is counted here.
+        // dbo: RegularTable, DiagramLikeTable; sales: SalesTable
+        Assert.Equal(3, counts.tables);
+        // dbo: RegularView (DiagramLikeView excluded); sales: SalesView
+        Assert.Equal(2, counts.views);
+        // dbo: GetFoo, sp_GetFoo (DiagramLikeProc excluded); sales: SalesProc
+        Assert.Equal(3, counts.procs);
+    }
+
+    [Fact]
+    public void DestinationCountQuery_ScopedToSales_CountsOnlySalesSchemaObjects()
+    {
+        var counts = DestinationCountQuery.Read(_fx.ConnectionString, "sales");
+
+        Assert.Equal(1, counts.tables); // SalesTable
+        Assert.Equal(1, counts.views);  // SalesView
+        Assert.Equal(1, counts.procs);  // SalesProc
+    }
+
+    [Fact]
+    public void DestinationCountQuery_ScopedToDbo_CountsOnlyDboSchemaObjects()
+    {
+        var counts = DestinationCountQuery.Read(_fx.ConnectionString, "dbo");
+
+        // RegularTable, DiagramLikeTable (tables aren't excluded by the
+        // tools-support filter)
+        Assert.Equal(2, counts.tables);
+        // RegularView (DiagramLikeView excluded)
+        Assert.Equal(1, counts.views);
+        // GetFoo, sp_GetFoo (DiagramLikeProc excluded)
+        Assert.Equal(2, counts.procs);
+    }
+
+    [Fact]
+    public void DestinationCountQuery_ScopedCounts_MatchSchemaReaderFilteredRead()
+    {
+        // The scoped count must agree with what a schema-filtered SchemaReader
+        // read would have snapshotted — that's the invariant the pre-Apply
+        // drift check under a schema filter depends on.
+        var schema = new SchemaReader(_fx.ConnectionString, _fx.DatabaseName)
+            .ReadSchema(null, new SchemaReadOptions { SchemaFilter = "sales" });
+        var counts = DestinationCountQuery.Read(_fx.ConnectionString, "sales");
+
+        Assert.Equal(schema.Tables.Count, counts.tables);
+        Assert.Equal(schema.Views.Count, counts.views);
+        Assert.Equal(schema.StoredProcedures.Count, counts.procs);
+    }
+
+    [Fact]
+    public void DestinationCountQuery_ScopedToSchemaWithNoObjects_ReturnsZero()
+    {
+        var counts = DestinationCountQuery.Read(_fx.ConnectionString, "nonexistent_schema");
+
+        Assert.Equal(0, counts.tables);
+        Assert.Equal(0, counts.views);
+        Assert.Equal(0, counts.procs);
     }
 }

@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.4.5] — 2026-07-14
+
+### Added
+- **Schema filter for comparisons.** A new "Schema:" dropdown at the bottom of the comparison setup screen (next to the object-type checkboxes) limits the comparison to a single schema. The list is populated from Side A's selected database (system schemas excluded) and the same schema applies to both sides; the default "(All schemas)" keeps today's behavior. Filtering happens at read time — objects in other schemas are never enumerated or scripted — so scoped compares of large multi-schema databases are substantially faster. Works in folder mode too (Side B's parsed .sql objects are filtered in memory). Schema-scoped reads are cached separately from full-database reads (a scoped read can never be served as the whole database), and a fresh full-database cache entry satisfies a scoped compare instantly by in-memory filtering. Permissions comparison scopes with the filter: object-level grants for objects in the schema plus that schema's schema-level grants. Note: with a filter active, objects in other schemas simply don't appear in results (they are not reported as missing).
+
 ## [1.4.4] — 2026-06-16
 
 ### Added

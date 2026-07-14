@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Data.SqlClient;
 using System.IO;
@@ -89,6 +91,32 @@ namespace SQLParity.Vsix.ViewModels
         public ObjectTypeFilterViewModel ObjectTypeFilter { get; } = new ObjectTypeFilterViewModel();
         public ICommand ContinueCommand { get; }
 
+        public const string AllSchemasItem = "(All schemas)";
+
+        private string _selectedSchema = AllSchemasItem;
+        private int _schemaRefreshSeq;
+
+        public ObservableCollection<string> AvailableSchemas { get; } =
+            new ObservableCollection<string> { AllSchemasItem };
+
+        /// <summary>
+        /// The dropdown selection. Never null — coerced back to
+        /// <see cref="AllSchemasItem"/> so a cleared ComboBox can't
+        /// produce a null filter string downstream.
+        /// </summary>
+        public string SelectedSchema
+        {
+            get => _selectedSchema;
+            set => SetProperty(ref _selectedSchema, string.IsNullOrWhiteSpace(value) ? AllSchemasItem : value);
+        }
+
+        /// <summary>
+        /// The effective schema filter for the comparison: null when
+        /// "(All schemas)" is selected, otherwise the schema name.
+        /// </summary>
+        public string SchemaFilter =>
+            _selectedSchema == AllSchemasItem ? null : _selectedSchema;
+
         public bool HasDuplicateLabels
         {
             get => _hasDuplicateLabels;
@@ -150,6 +178,76 @@ namespace SQLParity.Vsix.ViewModels
                     SideB.DatabaseName = SideA.DatabaseName;
                 }
             }
+
+            // Repopulate the schema-filter dropdown when Side A's database
+            // changes, or when a Side A connect finishes (IsConnecting flips
+            // false) — the connect may make the same DatabaseName newly readable.
+            if (sender == SideA
+                && (e.PropertyName == nameof(ConnectionSideViewModel.DatabaseName)
+                    || (e.PropertyName == nameof(ConnectionSideViewModel.IsConnecting) && !SideA.IsConnecting)))
+            {
+                RefreshAvailableSchemasAsync();
+            }
+        }
+
+        /// <summary>
+        /// Repopulates the schema dropdown from Side A's selected database.
+        /// Fire-and-forget: connection failures leave just "(All schemas)".
+        /// A sequence counter discards stale results when the user changes
+        /// server/database faster than queries return.
+        /// </summary>
+        private async void RefreshAvailableSchemasAsync()
+        {
+            int seq = ++_schemaRefreshSeq;
+            List<string> schemas = null;
+
+            if (!SideA.IsFolderMode
+                && !string.IsNullOrWhiteSpace(SideA.ServerName)
+                && !string.IsNullOrWhiteSpace(SideA.DatabaseName))
+            {
+                try
+                {
+                    var connStr = SideA.BuildConnectionString();
+                    schemas = await Task.Run(() =>
+                    {
+                        var list = new List<string>();
+                        using (var conn = new SqlConnection(connStr))
+                        {
+                            conn.Open();
+                            using (var cmd = conn.CreateCommand())
+                            {
+                                cmd.CommandText =
+                                    "SELECT name FROM sys.schemas " +
+                                    "WHERE schema_id < 16384 " +   // excludes fixed db-role schemas (16384+)
+                                    "  AND name NOT IN ('sys', 'INFORMATION_SCHEMA', 'guest') " +
+                                    "ORDER BY name";
+                                using (var reader = cmd.ExecuteReader())
+                                {
+                                    while (reader.Read())
+                                        list.Add(reader.GetString(0));
+                                }
+                            }
+                        }
+                        return list;
+                    });
+                }
+                catch
+                {
+                    schemas = null; // can't connect yet — leave just "(All schemas)"
+                }
+            }
+
+            if (seq != _schemaRefreshSeq)
+                return; // a newer refresh superseded this one
+
+            var prior = SelectedSchema;
+            AvailableSchemas.Clear();
+            AvailableSchemas.Add(AllSchemasItem);
+            if (schemas != null)
+                foreach (var s in schemas)
+                    AvailableSchemas.Add(s);
+
+            SelectedSchema = AvailableSchemas.Contains(prior) ? prior : AllSchemasItem;
         }
 
         private void EvaluateValidation()

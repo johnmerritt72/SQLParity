@@ -55,6 +55,16 @@ namespace SQLParity.Vsix.ViewModels
         /// </summary>
         private Dictionary<string, FolderSchemaContext> _sideBFolderContextsByDb;
 
+        /// <summary>
+        /// The schema filter (if any) that was active when the current
+        /// comparison result was produced. Captured at compare time so the
+        /// pre-Apply drift check (<see cref="CheckDestinationUnchangedAsync"/>)
+        /// scopes its live counts the same way the snapshot was scoped — the
+        /// dropdown on <see cref="SetupViewModel"/> may have changed since
+        /// the compare ran, so that live value must never be read at apply time.
+        /// </summary>
+        private string _comparisonSchemaFilter;
+
         public ComparisonHostViewModel()
         {
             SetupViewModel = new ConnectionSetupViewModel();
@@ -189,6 +199,10 @@ namespace SQLParity.Vsix.ViewModels
                 var connStrA = sideA.BuildConnectionString();
                 var connStrB = sideB.BuildConnectionString();
                 var readOptions = SetupViewModel.ObjectTypeFilter.ToSchemaReadOptions();
+                readOptions.SchemaFilter = SetupViewModel.SchemaFilter;
+                string schemaFilter = string.IsNullOrWhiteSpace(readOptions.SchemaFilter)
+                    ? null
+                    : readOptions.SchemaFilter.Trim();
 
                 DatabaseSchema schemaA = null;
                 DatabaseSchema schemaB = null;
@@ -215,12 +229,20 @@ namespace SQLParity.Vsix.ViewModels
                 catch { }
 
                 // --- Read Side A (database 1 of 2) ---
-                var cachedA = SchemaCache.Get(sideA.ServerName, sideA.DatabaseName, cacheTtl);
-                if (cachedA != null && !sideA.ForceRefresh)
+                // Cache lookup order for a schema-filtered compare:
+                //   1. fresh full-DB entry  -> filter it in memory (instant)
+                //   2. fresh scoped entry   -> use as-is
+                //   3. otherwise            -> scoped read, stored under the scoped key
+                // Unfiltered compares only ever touch the full-DB key, so a partial
+                // read can never masquerade as the whole database. When both a full
+                // and a scoped entry are fresh, ResolveCachedSchema prefers whichever
+                // is younger so a just-force-refreshed scoped entry isn't shadowed by
+                // an older full entry still inside the TTL window.
+                var cachedA = ResolveCachedSchema(sideA, schemaFilter, cacheTtl);
+                if (cachedA != null)
                 {
-                    schemaA = cachedA;
-                    var ageA = SchemaCache.GetAge(sideA.ServerName, sideA.DatabaseName);
-                    ProgressText = $"Using cached schema for [{sideA.Label}] (read {ageA?.TotalMinutes:F0} minutes ago)";
+                    schemaA = cachedA.Value.Schema;
+                    ProgressText = $"Using cached schema for [{sideA.Label}] (read {cachedA.Value.Age?.TotalMinutes:F0} minutes ago)";
                 }
                 else
                 {
@@ -243,7 +265,7 @@ namespace SQLParity.Vsix.ViewModels
                         return reader.ReadSchema(progressA, readOptions, ct);
                     });
 
-                    SchemaCache.Put(sideA.ServerName, sideA.DatabaseName, schemaA);
+                    SchemaCache.Put(sideA.ServerName, sideA.DatabaseName, schemaA, schemaFilter);
                 }
 
                 ct.ThrowIfCancellationRequested();
@@ -258,6 +280,7 @@ namespace SQLParity.Vsix.ViewModels
                     // and read per-DB as needed. This avoids a wasted read of
                     // a DB that no file actually targets.
                     schemaA = null;
+                    _comparisonSchemaFilter = schemaFilter;
                     result = await BuildMultiDbFolderResultAsync(
                         sideA, sideB, readOptions,
                         ignoreCommentsInSps, ignoreWhitespaceInSps, ignoreOptionalBrackets,
@@ -266,12 +289,12 @@ namespace SQLParity.Vsix.ViewModels
                 else
                 {
                     _sideBFolderContextsByDb = null;
-                    var cachedB = SchemaCache.Get(sideB.ServerName, sideB.DatabaseName, cacheTtl);
-                    if (cachedB != null && !sideB.ForceRefresh)
+                    _comparisonSchemaFilter = schemaFilter;
+                    var cachedB = ResolveCachedSchema(sideB, schemaFilter, cacheTtl);
+                    if (cachedB != null)
                     {
-                        schemaB = cachedB;
-                        var ageB = SchemaCache.GetAge(sideB.ServerName, sideB.DatabaseName);
-                        ProgressText = $"Using cached schema for [{sideB.Label}] (read {ageB?.TotalMinutes:F0} minutes ago)";
+                        schemaB = cachedB.Value.Schema;
+                        ProgressText = $"Using cached schema for [{sideB.Label}] (read {cachedB.Value.Age?.TotalMinutes:F0} minutes ago)";
                     }
                     else
                     {
@@ -293,7 +316,7 @@ namespace SQLParity.Vsix.ViewModels
                             return reader.ReadSchema(progressB, readOptions, ct);
                         });
 
-                        SchemaCache.Put(sideB.ServerName, sideB.DatabaseName, schemaB);
+                        SchemaCache.Put(sideB.ServerName, sideB.DatabaseName, schemaB, schemaFilter);
                     }
 
                     ct.ThrowIfCancellationRequested();
@@ -356,6 +379,44 @@ namespace SQLParity.Vsix.ViewModels
             }
         }
 
+        /// <summary>
+        /// Picks which cached schema (if any) a compare should use for one side.
+        /// The full-DB cache entry and the schema-scoped entry can both be within
+        /// TTL at the same time — e.g. the user force-refreshed a filtered compare,
+        /// writing a fresh scoped entry, while an older full entry is still inside
+        /// the TTL window. Naively preferring the full entry (filtered in memory)
+        /// would silently serve that older data back to the user. This picks
+        /// whichever fresh entry is younger. Returns null when the side is
+        /// force-refreshing or neither entry is fresh, so the caller falls
+        /// through to its normal live-read path.
+        /// </summary>
+        private static (DatabaseSchema Schema, TimeSpan? Age)? ResolveCachedSchema(
+            ConnectionSideViewModel side, string schemaFilter, int cacheTtl)
+        {
+            if (side.ForceRefresh)
+                return null;
+
+            var cachedFull = SchemaCache.Get(side.ServerName, side.DatabaseName, cacheTtl);
+            var cachedScoped = schemaFilter == null
+                ? null
+                : SchemaCache.Get(side.ServerName, side.DatabaseName, cacheTtl, schemaFilter);
+
+            if (cachedFull == null && cachedScoped == null)
+                return null;
+
+            var ageFull = SchemaCache.GetAge(side.ServerName, side.DatabaseName);
+            var ageScoped = SchemaCache.GetAge(side.ServerName, side.DatabaseName, schemaFilter);
+
+            bool preferScoped = cachedScoped != null && (cachedFull == null || ageScoped < ageFull);
+            if (preferScoped)
+                return (cachedScoped, ageScoped);
+
+            var schema = schemaFilter == null
+                ? cachedFull
+                : DatabaseSchemaFilter.FilterToSchema(cachedFull, schemaFilter);
+            return (schema, ageFull);
+        }
+
         private async Task<bool> CheckDestinationUnchangedAsync()
         {
             var dir = ResultsViewModel.Direction;
@@ -408,9 +469,15 @@ namespace SQLParity.Vsix.ViewModels
                 // drift on every Generate-Script / Apply-Live click because the
                 // diagram-marker extended property excludes objects from SMO but
                 // not from a raw sys.* COUNT.
+                //
+                // _comparisonSchemaFilter (captured at compare time, not read
+                // from SetupViewModel here) scopes the count to the schema the
+                // snapshot was actually limited to — otherwise a filtered
+                // compare always sees "extra" objects belonging to schemas
+                // outside the filter and reports false drift.
                 var connStr = destination.BuildConnectionString();
                 var counts = await Task.Run(() =>
-                    SQLParity.Core.Sync.DestinationCountQuery.Read(connStr));
+                    DestinationCountQuery.Read(connStr, _comparisonSchemaFilter));
 
                 ProgressText = string.Empty;
 
@@ -890,6 +957,10 @@ namespace SQLParity.Vsix.ViewModels
             bool limitToFolderObjects,
             System.Threading.CancellationToken ct)
         {
+            string schemaFilter = string.IsNullOrWhiteSpace(readOptions.SchemaFilter)
+                ? null
+                : readOptions.SchemaFilter.Trim();
+
             ProgressText = $"Reading solution folder [{sideB.Label}] at {sideB.FolderPath}";
             ProgressValue = 0;
             ProgressMaximum = 0;
@@ -954,6 +1025,8 @@ namespace SQLParity.Vsix.ViewModels
 
                 var folderResult = folderByDb[dbName];
                 var schemaB = folderResult.Schema;
+                if (schemaFilter != null)
+                    schemaB = DatabaseSchemaFilter.FilterToSchema(schemaB, schemaFilter);
                 bool effectiveLimit = limitToFolderObjects && !IsSchemaEmpty(schemaB);
 
                 ProgressText = $"Comparing [{dbName}] ({dbIndex} of {dbTotal})…";

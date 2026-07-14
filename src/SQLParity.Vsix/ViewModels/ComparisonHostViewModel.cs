@@ -189,6 +189,10 @@ namespace SQLParity.Vsix.ViewModels
                 var connStrA = sideA.BuildConnectionString();
                 var connStrB = sideB.BuildConnectionString();
                 var readOptions = SetupViewModel.ObjectTypeFilter.ToSchemaReadOptions();
+                readOptions.SchemaFilter = SetupViewModel.SchemaFilter;
+                string schemaFilter = string.IsNullOrWhiteSpace(readOptions.SchemaFilter)
+                    ? null
+                    : readOptions.SchemaFilter.Trim();
 
                 DatabaseSchema schemaA = null;
                 DatabaseSchema schemaB = null;
@@ -215,11 +219,28 @@ namespace SQLParity.Vsix.ViewModels
                 catch { }
 
                 // --- Read Side A (database 1 of 2) ---
-                var cachedA = SchemaCache.Get(sideA.ServerName, sideA.DatabaseName, cacheTtl);
-                if (cachedA != null && !sideA.ForceRefresh)
+                // Cache lookup order for a schema-filtered compare:
+                //   1. fresh full-DB entry  -> filter it in memory (instant)
+                //   2. fresh scoped entry   -> use as-is
+                //   3. otherwise            -> scoped read, stored under the scoped key
+                // Unfiltered compares only ever touch the full-DB key, so a partial
+                // read can never masquerade as the whole database.
+                var cachedFullA = SchemaCache.Get(sideA.ServerName, sideA.DatabaseName, cacheTtl);
+                var cachedScopedA = schemaFilter == null
+                    ? null
+                    : SchemaCache.Get(sideA.ServerName, sideA.DatabaseName, cacheTtl, schemaFilter);
+                if (cachedFullA != null && !sideA.ForceRefresh)
                 {
-                    schemaA = cachedA;
+                    schemaA = schemaFilter == null
+                        ? cachedFullA
+                        : DatabaseSchemaFilter.FilterToSchema(cachedFullA, schemaFilter);
                     var ageA = SchemaCache.GetAge(sideA.ServerName, sideA.DatabaseName);
+                    ProgressText = $"Using cached schema for [{sideA.Label}] (read {ageA?.TotalMinutes:F0} minutes ago)";
+                }
+                else if (cachedScopedA != null && !sideA.ForceRefresh)
+                {
+                    schemaA = cachedScopedA;
+                    var ageA = SchemaCache.GetAge(sideA.ServerName, sideA.DatabaseName, schemaFilter);
                     ProgressText = $"Using cached schema for [{sideA.Label}] (read {ageA?.TotalMinutes:F0} minutes ago)";
                 }
                 else
@@ -243,7 +264,7 @@ namespace SQLParity.Vsix.ViewModels
                         return reader.ReadSchema(progressA, readOptions, ct);
                     });
 
-                    SchemaCache.Put(sideA.ServerName, sideA.DatabaseName, schemaA);
+                    SchemaCache.Put(sideA.ServerName, sideA.DatabaseName, schemaA, schemaFilter);
                 }
 
                 ct.ThrowIfCancellationRequested();
@@ -266,11 +287,22 @@ namespace SQLParity.Vsix.ViewModels
                 else
                 {
                     _sideBFolderContextsByDb = null;
-                    var cachedB = SchemaCache.Get(sideB.ServerName, sideB.DatabaseName, cacheTtl);
-                    if (cachedB != null && !sideB.ForceRefresh)
+                    var cachedFullB = SchemaCache.Get(sideB.ServerName, sideB.DatabaseName, cacheTtl);
+                    var cachedScopedB = schemaFilter == null
+                        ? null
+                        : SchemaCache.Get(sideB.ServerName, sideB.DatabaseName, cacheTtl, schemaFilter);
+                    if (cachedFullB != null && !sideB.ForceRefresh)
                     {
-                        schemaB = cachedB;
+                        schemaB = schemaFilter == null
+                            ? cachedFullB
+                            : DatabaseSchemaFilter.FilterToSchema(cachedFullB, schemaFilter);
                         var ageB = SchemaCache.GetAge(sideB.ServerName, sideB.DatabaseName);
+                        ProgressText = $"Using cached schema for [{sideB.Label}] (read {ageB?.TotalMinutes:F0} minutes ago)";
+                    }
+                    else if (cachedScopedB != null && !sideB.ForceRefresh)
+                    {
+                        schemaB = cachedScopedB;
+                        var ageB = SchemaCache.GetAge(sideB.ServerName, sideB.DatabaseName, schemaFilter);
                         ProgressText = $"Using cached schema for [{sideB.Label}] (read {ageB?.TotalMinutes:F0} minutes ago)";
                     }
                     else
@@ -293,7 +325,7 @@ namespace SQLParity.Vsix.ViewModels
                             return reader.ReadSchema(progressB, readOptions, ct);
                         });
 
-                        SchemaCache.Put(sideB.ServerName, sideB.DatabaseName, schemaB);
+                        SchemaCache.Put(sideB.ServerName, sideB.DatabaseName, schemaB, schemaFilter);
                     }
 
                     ct.ThrowIfCancellationRequested();
@@ -883,6 +915,10 @@ namespace SQLParity.Vsix.ViewModels
             bool limitToFolderObjects,
             System.Threading.CancellationToken ct)
         {
+            string schemaFilter = string.IsNullOrWhiteSpace(readOptions.SchemaFilter)
+                ? null
+                : readOptions.SchemaFilter.Trim();
+
             ProgressText = $"Reading solution folder [{sideB.Label}] at {sideB.FolderPath}";
             ProgressValue = 0;
             ProgressMaximum = 0;
@@ -947,6 +983,8 @@ namespace SQLParity.Vsix.ViewModels
 
                 var folderResult = folderByDb[dbName];
                 var schemaB = folderResult.Schema;
+                if (schemaFilter != null)
+                    schemaB = DatabaseSchemaFilter.FilterToSchema(schemaB, schemaFilter);
                 bool effectiveLimit = limitToFolderObjects && !IsSchemaEmpty(schemaB);
 
                 ProgressText = $"Comparing [{dbName}] ({dbIndex} of {dbTotal})…";

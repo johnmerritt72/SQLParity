@@ -26,6 +26,17 @@ public sealed class LiveApplier
 
         using var conn = new SqlConnection(_connectionString);
         conn.Open();
+
+        // Server-side PRINT / RAISERROR(severity ≤ 10) messages land here.
+        // We snapshot the buffer per step so each step records its own messages.
+        var currentBatch = new List<string>();
+        SqlInfoMessageEventHandler captureInfo = (_, e) =>
+        {
+            foreach (SqlError err in e.Errors)
+                currentBatch.Add(err.Message);
+        };
+        conn.InfoMessage += captureInfo;
+
         using var tx = conn.BeginTransaction();
 
         foreach (var change in changeList)
@@ -35,6 +46,7 @@ public sealed class LiveApplier
                 continue;
 
             var sw = Stopwatch.StartNew();
+            currentBatch.Clear();
             try
             {
                 using var cmd = conn.CreateCommand();
@@ -49,6 +61,7 @@ public sealed class LiveApplier
                     Succeeded = true,
                     ErrorMessage = null,
                     Duration = sw.Elapsed,
+                    InfoMessages = currentBatch.ToArray(),
                 });
             }
             catch (SqlException ex) when (IsRoutineType(change.ObjectType)
@@ -65,6 +78,7 @@ public sealed class LiveApplier
                     Succeeded = true,
                     ErrorMessage = "Warning: " + ex.Message,
                     Duration = sw.Elapsed,
+                    InfoMessages = currentBatch.ToArray(),
                 });
             }
             catch (Exception ex)
@@ -77,6 +91,7 @@ public sealed class LiveApplier
                     Succeeded = false,
                     ErrorMessage = ex.Message,
                     Duration = sw.Elapsed,
+                    InfoMessages = currentBatch.ToArray(),
                 });
                 allSucceeded = false;
                 break; // Stop on first failure
@@ -85,6 +100,60 @@ public sealed class LiveApplier
             completed++;
             progress?.Report((completed, changeList.Count, change.Id.ToString()));
         }
+
+        // Permissions pass — mirrors the trailing Permissions section in
+        // ScriptGenerator.Generate. Runs only if every DDL step succeeded so the
+        // grants always reference objects that already exist in the catalog.
+        if (allSucceeded)
+        {
+            foreach (var change in changeList)
+            {
+                if (change.PermissionChanges == null || change.PermissionChanges.Count == 0)
+                    continue;
+
+                string permSql = PermissionScriptGenerator.Generate(change);
+                if (string.IsNullOrWhiteSpace(permSql))
+                    continue;
+
+                var stepName = change.Id + " (permissions)";
+                var sw = Stopwatch.StartNew();
+                currentBatch.Clear();
+                try
+                {
+                    using var cmd = conn.CreateCommand();
+                    cmd.Transaction = tx;
+                    cmd.CommandText = permSql;
+                    cmd.ExecuteNonQuery();
+                    sw.Stop();
+                    steps.Add(new ApplyStepResult
+                    {
+                        ObjectName = stepName,
+                        Sql = permSql,
+                        Succeeded = true,
+                        ErrorMessage = null,
+                        Duration = sw.Elapsed,
+                        InfoMessages = currentBatch.ToArray(),
+                    });
+                }
+                catch (Exception ex)
+                {
+                    sw.Stop();
+                    steps.Add(new ApplyStepResult
+                    {
+                        ObjectName = stepName,
+                        Sql = permSql,
+                        Succeeded = false,
+                        ErrorMessage = ex.Message,
+                        Duration = sw.Elapsed,
+                        InfoMessages = currentBatch.ToArray(),
+                    });
+                    allSucceeded = false;
+                    break;
+                }
+            }
+        }
+
+        conn.InfoMessage -= captureInfo;
 
         if (allSucceeded)
             tx.Commit();

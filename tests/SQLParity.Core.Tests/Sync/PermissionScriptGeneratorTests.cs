@@ -69,13 +69,36 @@ public class PermissionScriptGeneratorTests
     }
 
     [Fact]
-    public void EmitsPrincipalExistenceGuard()
+    public void EmitsPrincipalExistenceGuard_AsSkip_NotAbort()
     {
+        // Missing principal must NOT abort the script — it should skip just that
+        // grantee's grants and let the rest of the script run. We assert the
+        // generator no longer emits THROW for this case.
         var sql = PermissionScriptGenerator.Generate(ProcChange(
             PC("AppRole", "EXECUTE", PermissionState.Grant, null)));
         Assert.Contains("sys.database_principals", sql);
-        Assert.Contains("THROW", sql);
         Assert.Contains("AppRole", sql);
+        Assert.DoesNotContain("THROW", sql);
+    }
+
+    [Fact]
+    public void MultipleGrantees_EachGuardedIndependently_SoOneMissingDoesNotBlockOthers()
+    {
+        // The whole reason for the per-grantee guard: a missing principal must
+        // skip just that grantee, not stop subsequent grantees' grants. Verify
+        // the structural property — every grantee block stands alone.
+        var sql = PermissionScriptGenerator.Generate(ProcChange(
+            PC("Alpha", "EXECUTE", PermissionState.Grant, null),
+            PC("Zeta", "EXECUTE", PermissionState.Grant, null)));
+
+        // Each grantee has its own existence check (no shared abort).
+        int firstCheck = sql.IndexOf("sys.database_principals", System.StringComparison.Ordinal);
+        int secondCheck = sql.IndexOf("sys.database_principals", firstCheck + 1, System.StringComparison.Ordinal);
+        Assert.True(firstCheck >= 0 && secondCheck > firstCheck,
+            "Each grantee must have its own existence guard so they don't share a fate.");
+
+        // And nothing aborts the batch.
+        Assert.DoesNotContain("THROW", sql);
     }
 
     [Fact]

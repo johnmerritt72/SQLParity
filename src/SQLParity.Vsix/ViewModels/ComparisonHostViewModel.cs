@@ -234,24 +234,15 @@ namespace SQLParity.Vsix.ViewModels
                 //   2. fresh scoped entry   -> use as-is
                 //   3. otherwise            -> scoped read, stored under the scoped key
                 // Unfiltered compares only ever touch the full-DB key, so a partial
-                // read can never masquerade as the whole database.
-                var cachedFullA = SchemaCache.Get(sideA.ServerName, sideA.DatabaseName, cacheTtl);
-                var cachedScopedA = schemaFilter == null
-                    ? null
-                    : SchemaCache.Get(sideA.ServerName, sideA.DatabaseName, cacheTtl, schemaFilter);
-                if (cachedFullA != null && !sideA.ForceRefresh)
+                // read can never masquerade as the whole database. When both a full
+                // and a scoped entry are fresh, ResolveCachedSchema prefers whichever
+                // is younger so a just-force-refreshed scoped entry isn't shadowed by
+                // an older full entry still inside the TTL window.
+                var cachedA = ResolveCachedSchema(sideA, schemaFilter, cacheTtl);
+                if (cachedA != null)
                 {
-                    schemaA = schemaFilter == null
-                        ? cachedFullA
-                        : DatabaseSchemaFilter.FilterToSchema(cachedFullA, schemaFilter);
-                    var ageA = SchemaCache.GetAge(sideA.ServerName, sideA.DatabaseName);
-                    ProgressText = $"Using cached schema for [{sideA.Label}] (read {ageA?.TotalMinutes:F0} minutes ago)";
-                }
-                else if (cachedScopedA != null && !sideA.ForceRefresh)
-                {
-                    schemaA = cachedScopedA;
-                    var ageA = SchemaCache.GetAge(sideA.ServerName, sideA.DatabaseName, schemaFilter);
-                    ProgressText = $"Using cached schema for [{sideA.Label}] (read {ageA?.TotalMinutes:F0} minutes ago)";
+                    schemaA = cachedA.Value.Schema;
+                    ProgressText = $"Using cached schema for [{sideA.Label}] (read {cachedA.Value.Age?.TotalMinutes:F0} minutes ago)";
                 }
                 else
                 {
@@ -299,23 +290,11 @@ namespace SQLParity.Vsix.ViewModels
                 {
                     _sideBFolderContextsByDb = null;
                     _comparisonSchemaFilter = schemaFilter;
-                    var cachedFullB = SchemaCache.Get(sideB.ServerName, sideB.DatabaseName, cacheTtl);
-                    var cachedScopedB = schemaFilter == null
-                        ? null
-                        : SchemaCache.Get(sideB.ServerName, sideB.DatabaseName, cacheTtl, schemaFilter);
-                    if (cachedFullB != null && !sideB.ForceRefresh)
+                    var cachedB = ResolveCachedSchema(sideB, schemaFilter, cacheTtl);
+                    if (cachedB != null)
                     {
-                        schemaB = schemaFilter == null
-                            ? cachedFullB
-                            : DatabaseSchemaFilter.FilterToSchema(cachedFullB, schemaFilter);
-                        var ageB = SchemaCache.GetAge(sideB.ServerName, sideB.DatabaseName);
-                        ProgressText = $"Using cached schema for [{sideB.Label}] (read {ageB?.TotalMinutes:F0} minutes ago)";
-                    }
-                    else if (cachedScopedB != null && !sideB.ForceRefresh)
-                    {
-                        schemaB = cachedScopedB;
-                        var ageB = SchemaCache.GetAge(sideB.ServerName, sideB.DatabaseName, schemaFilter);
-                        ProgressText = $"Using cached schema for [{sideB.Label}] (read {ageB?.TotalMinutes:F0} minutes ago)";
+                        schemaB = cachedB.Value.Schema;
+                        ProgressText = $"Using cached schema for [{sideB.Label}] (read {cachedB.Value.Age?.TotalMinutes:F0} minutes ago)";
                     }
                     else
                     {
@@ -398,6 +377,44 @@ namespace SQLParity.Vsix.ViewModels
                     MessageBoxImage.Error);
                 CurrentState = WorkflowState.Confirmation;
             }
+        }
+
+        /// <summary>
+        /// Picks which cached schema (if any) a compare should use for one side.
+        /// The full-DB cache entry and the schema-scoped entry can both be within
+        /// TTL at the same time — e.g. the user force-refreshed a filtered compare,
+        /// writing a fresh scoped entry, while an older full entry is still inside
+        /// the TTL window. Naively preferring the full entry (filtered in memory)
+        /// would silently serve that older data back to the user. This picks
+        /// whichever fresh entry is younger. Returns null when the side is
+        /// force-refreshing or neither entry is fresh, so the caller falls
+        /// through to its normal live-read path.
+        /// </summary>
+        private static (DatabaseSchema Schema, TimeSpan? Age)? ResolveCachedSchema(
+            ConnectionSideViewModel side, string schemaFilter, int cacheTtl)
+        {
+            if (side.ForceRefresh)
+                return null;
+
+            var cachedFull = SchemaCache.Get(side.ServerName, side.DatabaseName, cacheTtl);
+            var cachedScoped = schemaFilter == null
+                ? null
+                : SchemaCache.Get(side.ServerName, side.DatabaseName, cacheTtl, schemaFilter);
+
+            if (cachedFull == null && cachedScoped == null)
+                return null;
+
+            var ageFull = SchemaCache.GetAge(side.ServerName, side.DatabaseName);
+            var ageScoped = SchemaCache.GetAge(side.ServerName, side.DatabaseName, schemaFilter);
+
+            bool preferScoped = cachedScoped != null && (cachedFull == null || ageScoped < ageFull);
+            if (preferScoped)
+                return (cachedScoped, ageScoped);
+
+            var schema = schemaFilter == null
+                ? cachedFull
+                : DatabaseSchemaFilter.FilterToSchema(cachedFull, schemaFilter);
+            return (schema, ageFull);
         }
 
         private async Task<bool> CheckDestinationUnchangedAsync()
